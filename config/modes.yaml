@@ -1,0 +1,40 @@
+# Capture/processing presets (handoff §5.4). Editable from the UI later; the
+# server persists changes back to this file.
+#
+# Format rule (handoff §2.1): MJPEG for 4K, YUY2 only at 1080p. The config
+# loader rejects YUY2 above 1080p.
+
+dome:
+  size: 4096          # all-sky canvas, constant across modes
+  equirect: [8192, 2048]
+
+modes:
+  day:
+    capture: {format: MJPG, width: 3840, height: 2160, fps: 30}
+    exposure: {auto: true}
+    white_balance: {auto: true}
+    stack: {frames: 1}
+  night:
+    capture: {format: YUYV, width: 1920, height: 1080, fps: 15}
+    exposure: {auto: false, time_100us: max, gain: high}
+    white_balance: {auto: false}
+    stack: {frames: 6, method: mean}
+  deep:
+    capture: {format: YUYV, width: 1920, height: 1080, fps: 10}
+    exposure: {auto: false, time_100us: max, gain: high}
+    white_balance: {auto: false}
+    stack: {frames: 30, method: sigma_clip_mean, sigma: 3.0}
+    stretch: asinh
+    hot_pixels: true
+    darks: true
+  meteor:
+    capture: {format: MJPG, width: 3840, height: 2160, fps: 30}
+    exposure: {auto: false, time_100us: 300, gain: high}
+    white_balance: {auto: true}
+    stack: {frames: 1}
+
+# Auto mode switches by sun altitude (degrees)
+auto:
+  day_above: -6       # civil twilight
+  night_above: -18    # between nautical and astronomical twilight
+  # below night_above -> deep

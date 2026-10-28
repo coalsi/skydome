@@ -1,0 +1,7 @@
+# Observing site. Approximate defaults from handoff §5.3; the owner will
+# enter exact coordinates (or a USB GPS will override them later).
+name: Surprise, AZ
+latitude_deg: 33.63      # north positive
+longitude_deg: -112.37   # east positive, so west is negative
+elevation_m: 350
+timezone: America/Phoenix  # no DST

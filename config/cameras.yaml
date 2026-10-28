@@ -1,0 +1,41 @@
+# The five cameras. Each is identified by its physical USB port (ID_PATH),
+# never by /dev/videoN. id_path is filled in on bring-up with
+# tools/identify_cameras.py, then tools/gen_udev_rules.py writes the udev
+# rules that create /dev/skycam-<name>.
+#
+# pointing is the NOMINAL orientation from the mount design. It is only the
+# starting guess: auto-align from the stars writes the real rotation to
+# config/calibration/extrinsics.yaml, which takes precedence.
+#   az_deg   0 = north, 90 = east (clockwise seen from above)
+#   alt_deg  elevation above the horizon; the side cameras are printed at 35
+#            (mount tilt = 55, DECISIONS.md D-009)
+#   roll_deg rotation about the optical axis; 0 = image rows level with the
+#            horizon for the side cameras (see DECISIONS.md D-004)
+#
+# lens is the nominal model used until calibrate_intrinsics.py has produced
+# config/calibration/<name>.yaml.
+
+sensor:
+  width: 3840
+  height: 2160
+
+lens:
+  hfov_deg: 120           # SVPRO L39 M12 lens, per the product listing
+  projection: equidistant  # equidistant | rectilinear - unknown until calibrated (DECISIONS.md F-4)
+
+cameras:
+  - name: zenith
+    id_path: null
+    pointing: {az_deg: 0, alt_deg: 90, roll_deg: 0}
+  - name: north
+    id_path: null
+    pointing: {az_deg: 0, alt_deg: 35, roll_deg: 0}
+  - name: east
+    id_path: null
+    pointing: {az_deg: 90, alt_deg: 35, roll_deg: 0}
+  - name: south
+    id_path: null
+    pointing: {az_deg: 180, alt_deg: 35, roll_deg: 0}
+  - name: west
+    id_path: null
+    pointing: {az_deg: 270, alt_deg: 35, roll_deg: 0}
