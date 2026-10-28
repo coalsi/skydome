@@ -46,3 +46,7 @@ python3 tools/identify_cameras.py             # snapshots at http://skydome.loca
 python3 tools/identify_cameras.py --assign north=<ID_PATH> ...
 sudo python3 tools/gen_udev_rules.py --install   # creates /dev/skycam-<name>
 ```
+
+## License
+
+MIT, see [`LICENSE`](LICENSE).

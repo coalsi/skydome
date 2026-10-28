@@ -1,6 +1,7 @@
 [project]
 name = "skydome-pipeline"
 version = "0.1.0"
+license = "MIT"
 description = "SkyDome geometry, camera models, dome projection and stitch LUTs"
 requires-python = ">=3.10"
 dependencies = [
