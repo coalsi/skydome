@@ -361,6 +361,12 @@ controllable from the web app when wanted.
   changes alter the picture, not the stream format. The Smooth toggle is
   manual and reverts to Detail after a timeout (default 30 min) unless
   pinned, so an unattended rig always returns to the NVR's format.
+* **The NVR is the owner's own software**, so it takes the full 4096²
+  H.264 stream as is. Its decoder must accept frames beyond H.264 level
+  5.2 (4096 × 2304): FFmpeg/libavcodec software decode does; many
+  hardware decoders don't. Snapshot (ONVIF `GetSnapshotUri`) is the
+  full-res hardware JPEG, and mode/exposure/alignment are available to it
+  from the REST API.
 * **Self-healing:** every service is a systemd unit with automatic
   restart; the Jetson's hardware watchdog reboots a hung system; a lost
   camera keeps the dome running on four and re-attaches (§5.1); the disk
