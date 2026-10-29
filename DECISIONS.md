@@ -26,6 +26,12 @@ USB-C→C for the cameras, 1× right-angle USB-C→A 10 Gbps for the hub uplink.
 Note the RSH-H7C has 7 USB-C downstream ports, not the 4 the handoff's table
 implies; the udev rules key on whichever ports are used.
 
+*Update 2026-10-28:* the enclosure geometry now favours the handoff layout.
+The hub's middle top ports sit under the north camera. The fit checks
+assume only ports 4–6 (counted from the DC-jack end, starting at 0) are
+used, which allows at most 3 cameras on the hub. All five through the hub
+would crowd the north camera's plug.
+
 ### F-002 · Mount: handoff text is out of date
 `handoff.md` §2 describes "a pentagonal crown on a 1¼″ pipe mast with
 cradles". What has actually been designed (OpenSCAD, `../skycam_mount.scad`,
@@ -52,10 +58,15 @@ passes all collision checks at `tilt = 55`. Owner decision before printing.
 ### F-004 · Side cameras must be mounted landscape
 With the sensor turned 90° (portrait), neighbouring side cameras don't
 overlap near the horizon at all: gap-free coverage only above ~38°.
-The long side of the sensor must be parallel to the horizon. The mount's
-`side_spin` setting (which way the USB slot faces) has to be chosen so that
-is true; that depends on which board edge the USB-C port is on relative to
-the sensor rows. **Check on the real camera before printing.**
+The long side of the sensor must be parallel to the horizon.
+
+*Update 2026-10-28:* the camera's USB-C socket is a vertical socket under
+the bottom board, facing straight back (product photo; owner). The hub no
+longer has edge slots, the seats are square, and the camera can turn to any
+of 4 positions at install. **No longer a print dependency.** At install,
+choose the landscape rotation whose socket edge has room for the plug; the
+`skycam_mount.scad` header lists the edge per camera. Fit checks pass with
+right-angle plug heads up to 15 mm long (socket assumed 9.5 mm deep).
 
 ### F-005 · Lens projection and true HFOV unknown
 "120° HFOV" is from the listing. Whether the lens is fisheye-like or close
