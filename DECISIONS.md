@@ -148,7 +148,7 @@ night sky, pure noise and a smooth day sky all within ~10%):
 x265 is unusable on this CPU. The hardware **JPEG** encoder (`nvjpegenc`,
 NVJPG) is present and did 4096² at 28 fps.
 
-**Recommendation (approved, D-014):** option (a), no new hardware.
+**Recommendation (approved and revised, D-014):** option (a), no new hardware.
 * One `x264` H.264 encode of the dome at **2048² × 30 fps** on 4 threads
   (~70% of what 4 threads can do, leaving 2 cores for everything else),
   shared by the live stream and the ring buffer. H.264 also plays in every
@@ -278,21 +278,52 @@ good to a few degrees at best, and the magnet feet and the electronics in
 the box would throw it off. Orientation comes from the stars (and can come
 from the Sun's position by day), and the rig keeps it until it's moved.
 
-### D-014 · Video: 2048² H.264 on the CPU, full-res frames as hardware JPEG (owner, 2026-10-29)
-Resolves F-008 with option (a); departs from handoff §5 (`nvv4l2h265enc`
-ring buffer) and the §4 "encode H.264/H.265 HW" box, which stay verbatim.
-* **Video:** one `x264enc` encode of the dome, 2048 × 2048 at 30 fps,
-  ultrafast/zerolatency, 4 threads, about 12 Mbps. mediamtx serves that one
-  stream to WebRTC/RTSP/HLS and the ring buffer records the same stream
-  (no second encode). Night/Deep modes, which run at a few fps, may encode
-  larger (up to 4096²).
-* **Full resolution:** 4096² frames for stills, timelapse frames, plate
-  solving input and raw dumps go through `nvjpegenc` (hardware NVJPG).
-* **Budget check on camera day:** repeat the encode with the 5-camera
-  MJPEG decode and the CUDA stitch running; if 30 fps doesn't hold, drop
-  to 1800² or 25 fps before anything else.
-An Orin NX module (has NVENC, same carrier) stays the upgrade path if 4K30
-video becomes a requirement.
+### D-014 · Video: 4096² at 15 fps on the CPU by default, 2048² × 30 "Smooth" mode (owner, 2026-10-29)
+Resolves F-008 with option (a), no new hardware; departs from handoff §5
+(`nvv4l2h265enc` ring buffer) and the §4 "encode H.264/H.265 HW" box,
+which stay verbatim. (Revised the same day from 2048² × 30 after the
+full-load measurements below.)
+* **Detail (default):** one `x264enc` H.264 encode of the dome at
+  **4096 × 4096, 15 fps**, ultrafast/zerolatency, all cores, about
+  20 Mbps. Pixels outside the dome circle are written black (they cost
+  ~25% of the encode otherwise).
+* **Smooth (switch in the web UI):** 2048 × 2048 at 30 fps, same encoder,
+  for fast motion (birds, aircraft, storms). One mode at a time, never two
+  encodes.
+* **Night/Deep:** frames come at the exposure rate (a few fps), always at
+  4096².
+* One stream per mode: mediamtx serves it to WebRTC/RTSP/HLS and the ring
+  buffer records the same stream.
+* **Browser limit:** 4096 × 4096 is beyond H.264 level 5.2 (largest frame
+  4096 × 2304), which many hardware decoders cap at. If a browser won't
+  play it, send the Detail dome as two 4096 × 2048 halves (two encoders,
+  same total cost) and let the three.js viewer join them. Decide when the
+  web player is built.
+* **Clocks:** run `jetson_clocks` while the pipeline is up (+15–20%
+  encode); restore normal clocks when it stops.
+* **Cameras:** capture at 15–20 fps in Detail mode so the shared hardware
+  JPEG decoder (5 × 4K tops out at ~31 fps each) keeps headroom for the
+  full-res `nvjpegenc` stills; 30 fps in Smooth mode.
+* **Full resolution:** 4096² stills, timelapse frames, plate-solving input
+  and raw dumps go through `nvjpegenc` (hardware NVJPG).
+
+Measured 2026-10-29 with 5 simulated 4K30 MJPEG cameras decoding in
+hardware at real time (9% of the CPU) while x264 encoded a black-cornered
+dome:
+
+| dome | normal clocks | `jetson_clocks` | CPU at target |
+|---|---|---|---|
+| 4096² | 21.7 fps | 25.3 fps | 15 fps ≈ 60–70% |
+| 3456² | 28.8 fps | 33.4 fps | — |
+| 2880² | 38.7 fps | 46.1 fps | — |
+| 2048² | ~53 fps (encoder alone) | — | 30 fps ≈ 55–70% |
+
+4096² at 30 fps is out of reach (the ceiling is ~25 fps with nothing else
+running). **Still to check on camera day:** real USB bandwidth, the CUDA
+stitch running alongside, and heat in the enclosure outdoors. If Detail
+can't hold 15 fps, drop to 3456² before lowering the frame rate. An Orin
+NX module (NVENC, same carrier) stays the upgrade path if 4K30 video
+becomes a requirement.
 
 ---
 
