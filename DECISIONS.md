@@ -161,6 +161,22 @@ NVJPG) is present and did 4096² at 28 fps.
 Not yet measured: the same encode with the 5-camera decode and the CUDA
 stitch running alongside (camera day).
 
+### F-009 · Unattended outdoor runs (48 h+, winter nights)
+Handoff §2: "deployed outdoors in Arizona only in dry conditions while
+being monitored", and §9/§2: no weatherproofing, no dew heaters. The owner
+now wants to leave it out unattended for up to 48 h, including winter
+nights. The software side is D-015. What software can't fix:
+* **Dew/frost on the lens windows** on clear, still winter nights (most
+  likely after rain). The app can *detect* it (star count and contrast
+  collapse while the sky model says it's clear) and flag it, but not
+  clear it.
+* **Rain** (no weatherproofing) and **wind** on the light stand (D-012).
+* **Cold:** a Phoenix winter night (~0–10 °C) is inside the Jetson
+  module's rated range; no action needed.
+**Owner decision:** accept the risk for dry forecasts only, or revisit the
+"no heaters / no weatherproofing" scope (e.g. a passive dew shield or a
+small lens-window heater).
+
 ---
 
 ## Decisions
@@ -324,6 +340,39 @@ stitch running alongside, and heat in the enclosure outdoors. If Detail
 can't hold 15 fps, drop to 3456² before lowering the frame rate. An Orin
 NX module (NVENC, same carrier) stays the upgrade path if 4K30 video
 becomes a requirement.
+
+### D-015 · Hands-off Auto mode and an NVR-friendly stream (owner, 2026-10-29)
+Extends handoff §5.4 ("Auto mode scheduling by sun altitude") and §6–7.
+The rig must run for days with nobody touching it, and still be fully
+controllable from the web app when wanted.
+* **Auto is the default at every boot.** The mode (Day / Dusk-Night /
+  Deep) follows **both** the Sun's altitude (from the D-013 location and
+  UTC) **and the measured sky brightness** (median luminance and the
+  current exposure/gain of the cameras), so moonlit nights, overcast
+  days and storms get the right mode. Hysteresis plus a minimum dwell
+  (~5 min) so it can't flap at a threshold.
+* **Smooth transitions:** through twilight, exposure and gain ramp a
+  little every frame instead of jumping, and all five cameras follow one
+  shared exposure target so the seams stay invisible.
+* **NVR stream never changes shape:** the RTSP/ONVIF output keeps one
+  resolution and frame rate around the clock (Detail, 4096² × 15, D-014).
+  When night exposures are longer than 1/15 s, the latest (stacked)
+  frame is repeated, so the stream never stalls or reconnects. Mode
+  changes alter the picture, not the stream format. The Smooth toggle is
+  manual and reverts to Detail after a timeout (default 30 min) unless
+  pinned, so an unattended rig always returns to the NVR's format.
+* **Self-healing:** every service is a systemd unit with automatic
+  restart; the Jetson's hardware watchdog reboots a hung system; a lost
+  camera keeps the dome running on four and re-attaches (§5.1); the disk
+  watchdog prunes (§5.6); cold boot goes straight to streaming with no
+  keyboard or monitor (§3). Recording continues locally if the network
+  drops.
+* **Health at a glance:** the web app's status bar and a `/health` API
+  show mode, fps, dropped frames, temperatures, disk, alignment age and
+  any dew/fog flag (F-009), so a 48 h run can be checked from a phone.
+* **Manual control is always an override:** any mode or exposure set by
+  hand holds until released or until the next Auto transition, whichever
+  the user picks.
 
 ---
 
