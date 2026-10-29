@@ -103,12 +103,39 @@ ISO from a USB stick.
   matches the handoff, but it boots from microSD and the system then has
   to be moved to the NVMe by hand.
 
+*Update 2026-10-29:* installed and booting from NVMe (see Phase 0 findings).
+First-boot setup only appeared after a second firmware capsule update ran
+on a later boot; before that the display showed only a cursor and the
+system had no user account.
+
 Requirement for either: Jetson UEFI firmware ≥ 36.0. To check, press Esc
 at the NVIDIA logo. Older firmware needs NVIDIA's microSD bridge
 (JetPack 5.1.3 image), which Etcher on a Mac can also write.
 Sources: NVIDIA Orin Nano dev kit Quick Start and firmware-update pages,
 JetPack 7.2.1 release notes. Either way, reinstalling
 costs about an hour, so Phase 0 results can reverse the choice.
+
+### F-008 · The Orin Nano has no hardware video encoder
+Handoff §5 records the ring buffer with `nvv4l2h265enc`, and the live
+stream path (§4 diagram) encodes "H.264/H.265 HW". On the installed system
+there is no `nvv4l2h265enc` (or any `nvv4l2*enc`) and no encoder device
+node. That matches the hardware: NVIDIA ships NVENC only on Orin NX and
+AGX Orin; the Orin Nano encodes on the CPU (NVIDIA rates it at about one
+1080p30 stream on 1–2 cores). The hardware **decoder** is present
+(`nvv4l2decoder`), so MJPEG capture is unaffected. `x264enc` and
+`x265enc` are installed.
+
+Options:
+* **(a) CPU encode** with `x264enc` (ultrafast/zerolatency) for both the
+  live stream and the ring buffer, at a reduced size/rate (e.g. 2048²
+  dome at 10–15 fps, or 1440² at 30). Six A78AE cores are otherwise
+  mostly idle since decode is on NVDEC and stitching on the GPU.
+* **(b) Swap the module** for an Orin NX 16 GB (same carrier, has NVENC).
+  Keeps the handoff's 4K30 H.265 targets; costs money.
+
+**Recommendation:** measure (a) in Phase 0 (x264 throughput at 1440²,
+2048² and 3072² on this board, with the 5-camera decode load running)
+before choosing. **Owner decision** after that measurement.
 
 ---
 
@@ -202,7 +229,29 @@ Step-by-step: `docs/jetson-setup.md`.
 
 ## Phase 0 findings
 
-*Not run yet — the hardware hasn't arrived.* On day one:
+**System (2026-10-29, before cameras):**
+* Jetson Linux R39.2.1, Ubuntu 24.04.4, kernel 6.8.12-1021-tegra; model
+  "Orin Nano Engineering Reference Developer Kit Super"; 7.3 GiB RAM.
+* Root on `/dev/nvme0n1p1` (456 GB). Host `skydome` on Ethernet (DHCP),
+  reachable as `skydome.local`; SSH is key-only.
+* Power modes: 0 = 15W, 1 = 25W (factory default), 2 = MAXN_SUPER.
+  Set to MAXN_SUPER (`nvpmodel -m 2`, no reboot needed): CPU max
+  1.728 GHz, GPU max 1.02 GHz.
+* `nvidia-jetpack` 7.2.1-b49: CUDA 13.2.86, TensorRT 10.16.2, cuDNN 9,
+  VPI. 35 GB of 456 GB used afterwards.
+* `nvv4l2decoder` present with the `mjpeg` property; `nvjpegdec` present.
+  No hardware encoder (F-008). Python 3.12.3. v4l2-ctl 1.26.1.
+* `skydome.local` resolves from the Mac once `avahi-daemon` restarted
+  after the hostname was set.
+* USB: every USB-A port sits behind the carrier's onboard Realtek hub
+  (0bda:0489), one 10000M link to the SoC on bus 2.
+* RSH-H7C (no devices yet): two cascaded VIA Labs VL822-family hubs
+  (2109:0822 USB 3 + 2109:2822 USB 2 + billboard 2109:8822 each), both at
+  **10000M** ("SuperSpeed Plus Gen 2x1"). A camera on the far chip is
+  3 hubs deep (onboard → hub 1 → hub 2); USB allows 5. Which of the
+  hub's ports 4–6 sit on which chip is mapped on camera day.
+
+*Cameras not connected yet.* On camera day:
 `tools/bringup/phase0.sh --gst`, then paste `reports/phase0-*/summary.md`
 here: USB tree speeds, V4L2 format lists, real exposure/gain ranges, and the
 5× MJPEG 4K30 and 5× YUY2 1080p load-test results.

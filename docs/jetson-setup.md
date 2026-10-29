@@ -66,6 +66,13 @@ Sources: NVIDIA Orin Nano Developer Kit Quick Start Guide and JetPack
 
 ## D · First boot (about 15 min)
 
+What actually happened on this unit: the first boots after the install
+showed only a text cursor (the system had no user yet and the setup
+screens never appeared). After one more power cycle the NVIDIA logo said
+**Updating** — a second firmware update — and once that finished the
+Ubuntu welcome screens appeared. If you only get a cursor: power cycle
+with the USB stick removed, and never cut power while it says Updating.
+
 15. Accept the NVIDIA EULA, then choose the language, keyboard and time
     zone (**America/Phoenix**).
 16. Connect to the network. Create your user and password.
