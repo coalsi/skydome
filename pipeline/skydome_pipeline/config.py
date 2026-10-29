@@ -104,3 +104,15 @@ def load_cameras(config_dir: str | Path) -> CamerasConfig:
 
 def load_modes(config_dir: str | Path) -> ModesConfig:
     return ModesConfig.model_validate(_load(Path(config_dir) / "modes.yaml"))
+
+
+def calibrated_cameras(config_dir: str | Path) -> list[Camera]:
+    """Nominal cameras, with the lens replaced by config/calibration/<name>.yaml
+    wherever calibrate_intrinsics.py has written one."""
+    from .calibration import load_lens
+
+    cams = []
+    for cam in load_cameras(config_dir).nominal_cameras():
+        f = Path(config_dir) / "calibration" / f"{cam.name}.yaml"
+        cams.append(Camera(cam.name, load_lens(f), cam.rotation) if f.exists() else cam)
+    return cams

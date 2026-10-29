@@ -12,7 +12,9 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+# Lens calibration (tools/calibrate_intrinsics.py); not needed at runtime
+calib = ["opencv-python-headless>=4.8"]
+dev = ["pytest>=8.0", { include-group = "calib" }]
 
 [build-system]
 requires = ["hatchling"]

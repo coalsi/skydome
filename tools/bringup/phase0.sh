@@ -9,7 +9,8 @@
 # Writes reports/phase0-<timestamp>/ with raw command output plus
 # summary.md, which is what goes into DECISIONS.md.
 #
-# Written before the hardware arrived: untested on a real Jetson.
+# Dry-run on the Jetson with no cameras (2026-10-29); the camera parts are
+# untested until the cameras arrive.
 
 set -uo pipefail
 
@@ -65,6 +66,11 @@ for dev in /dev/video*; do
 done
 log ""
 log "## Cameras: ${#CAMS[@]} capture node(s) found"
+if [[ ${#CAMS[@]} -ne 5 ]]; then
+    log ""
+    log "**Expected 5.** Check every camera's cable, that the hub's ports 4-6 are switched"
+    log "on, and \`dmesg | tail -50\` for USB errors."
+fi
 log ""
 log "| node | ID_PATH | skycam link | exposure_time_absolute | gain |"
 log "|---|---|---|---|---|"
@@ -123,9 +129,42 @@ gst_test() {  # gst_test <name> <caps> <decode-chain>
     log "Average GPU load: ${gpu:-n/a}. Full log: \`tegrastats-$name.log\`."
 }
 
+# --- 1080p field of view ------------------------------------------------------
+# Night/Deep capture 1080p YUY2. If the camera bins the whole sensor, 1080p
+# shows the same view as 4K and the lens calibration just scales by 1/2; if
+# it crops the middle, the stitcher needs a different lens model for it.
+fov_check() {
+    local dev="$1" n
+    n="$(basename "$dev")"
+    timeout 20 gst-launch-1.0 -q v4l2src device="$dev" num-buffers=8 ! image/jpeg,width=3840,height=2160 \
+        ! multifilesink location="$OUT/fov-$n-4k-%d.jpg" >/dev/null 2>&1
+    # Encoding one small frame on the CPU is fine; it is decoding we never do there
+    timeout 20 gst-launch-1.0 -q v4l2src device="$dev" num-buffers=8 ! video/x-raw,format=YUY2,width=1920,height=1080 \
+        ! videoconvert ! jpegenc ! multifilesink location="$OUT/fov-$n-1080p-%d.jpg" >/dev/null 2>&1
+    for r in 4k 1080p; do
+        local last
+        last="$(ls "$OUT"/fov-"$n"-$r-*.jpg 2>/dev/null | sort -V | tail -1)"
+        [[ -n "$last" ]] && mv "$last" "$OUT/fov-$n-$r.jpg"
+        rm -f "$OUT"/fov-"$n"-$r-*.jpg
+    done
+}
+if [[ ${#CAMS[@]} -gt 0 ]]; then
+    fov_check "${CAMS[0]}"
+    log ""
+    log "## 1080p vs 4K field of view (${CAMS[0]})"
+    log "Compare \`fov-$(basename "${CAMS[0]}")-4k.jpg\` with \`fov-$(basename "${CAMS[0]}")-1080p.jpg\`:"
+    log "same view = binned (good), tighter view = cropped (note it in DECISIONS.md)."
+fi
+
+if [[ $RUN_GST == 1 && ${#CAMS[@]} -eq 0 ]]; then
+    log ""
+    log "**--gst skipped: no cameras found.**"
+fi
 if [[ $RUN_GST == 1 && ${#CAMS[@]} -gt 0 ]]; then
     # Day/Meteor: 4K MJPEG, hardware JPEG decode (never CPU)
     gst_test mjpeg-4k30 "image/jpeg,width=3840,height=2160,framerate=30/1" "! nvv4l2decoder mjpeg=1"
+    # Detail mode captures at 15 fps (DECISIONS.md D-014)
+    gst_test mjpeg-4k15 "image/jpeg,width=3840,height=2160,framerate=15/1" "! nvv4l2decoder mjpeg=1"
     # Night/Deep: 1080p uncompressed YUY2
     gst_test yuy2-1080p15 "video/x-raw,format=YUY2,width=1920,height=1080,framerate=15/1" ""
 fi

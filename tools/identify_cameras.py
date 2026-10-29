@@ -14,7 +14,7 @@ note which ID_PATH belongs to which direction.
 The second form writes those ID_PATHs into config/cameras.yaml. Then run
 tools/gen_udev_rules.py to create the /dev/skycam-<name> links.
 
-Untested on hardware: written before the Jetson arrived.
+Dry-run on the Jetson with no cameras (2026-10-29); untested with cameras.
 """
 
 from __future__ import annotations
@@ -51,11 +51,23 @@ def udev_props(dev: Path) -> dict[str, str]:
 
 
 def snapshot(dev: Path, dest: Path) -> bool:
-    """One MJPEG frame at 1280x720 straight from the camera: no decode needed."""
-    cmd = ["gst-launch-1.0", "-q", "v4l2src", f"device={dev}", "num-buffers=5", "!",
-           "image/jpeg,width=1280,height=720", "!", "multifilesink", f"location={dest}"]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-    return r.returncode == 0 and dest.exists()
+    """One small frame from the camera. MJPEG straight from the camera needs no
+    decode; if it doesn't offer 1280x720 MJPEG, take any MJPEG size, then fall
+    back to raw YUYV encoded to JPEG (CPU encode of one frame is fine)."""
+    chains = [["image/jpeg,width=1280,height=720"],
+              ["image/jpeg"],
+              ["video/x-raw,format=YUY2,width=1280,height=720", "!", "jpegenc"],
+              ["video/x-raw,format=YUY2", "!", "videoconvert", "!", "jpegenc"]]
+    for chain in chains:
+        cmd = ["gst-launch-1.0", "-q", "v4l2src", f"device={dev}", "num-buffers=5", "!", *chain,
+               "!", "multifilesink", f"location={dest}"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        except subprocess.TimeoutExpired:
+            continue
+        if r.returncode == 0 and dest.exists() and dest.stat().st_size > 0:
+            return True
+    return False
 
 
 def serve(port: int) -> None:
