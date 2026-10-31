@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -106,13 +107,47 @@ def load_modes(config_dir: str | Path) -> ModesConfig:
     return ModesConfig.model_validate(_load(Path(config_dir) / "modes.yaml"))
 
 
+def load_extrinsics(config_dir: str | Path) -> dict[str, np.ndarray]:
+    """Measured world-from-camera rotations from config/calibration/extrinsics.yaml
+    (align_from_overlap.py now, plate solving later), by camera name."""
+    f = Path(config_dir) / "calibration" / "extrinsics.yaml"
+    if not f.exists():
+        return {}
+    doc = _load(f) or {}
+    out = {}
+    for name, entry in (doc.get("cameras") or {}).items():
+        r = np.asarray(entry["rotation"], dtype=np.float64)
+        if r.shape != (3, 3) or not np.allclose(r @ r.T, np.eye(3), atol=1e-6):
+            raise ValueError(f"{f}: {name} rotation is not a rotation matrix")
+        out[name] = r
+    return out
+
+
+def fitted_hfov(config_dir: str | Path) -> float | None:
+    """Field of view align_from_overlap.py fitted to the overlaps, if any."""
+    f = Path(config_dir) / "calibration" / "extrinsics.yaml"
+    doc = (_load(f) or {}) if f.exists() else {}
+    return doc.get("lens_hfov_deg")
+
+
 def calibrated_cameras(config_dir: str | Path) -> list[Camera]:
-    """Nominal cameras, with the lens replaced by config/calibration/<name>.yaml
-    wherever calibrate_intrinsics.py has written one."""
+    """Nominal cameras, refined by what's been measured. Lens: the board
+    calibration config/calibration/<name>.yaml if there is one, else the
+    field of view fitted to the overlaps, else the nominal lens. Pointing:
+    config/calibration/extrinsics.yaml where it has an entry."""
     from .calibration import load_lens
 
+    cfg = load_cameras(config_dir)
+    rotations = load_extrinsics(config_dir)
+    hfov = fitted_hfov(config_dir)
     cams = []
-    for cam in load_cameras(config_dir).nominal_cameras():
+    for cam in cfg.nominal_cameras():
         f = Path(config_dir) / "calibration" / f"{cam.name}.yaml"
-        cams.append(Camera(cam.name, load_lens(f), cam.rotation) if f.exists() else cam)
+        if f.exists():
+            lens = load_lens(f)
+        elif hfov:
+            lens = type(cam.lens).from_hfov(cfg.sensor.width, cfg.sensor.height, hfov)
+        else:
+            lens = cam.lens
+        cams.append(Camera(cam.name, lens, rotations.get(cam.name, cam.rotation)))
     return cams

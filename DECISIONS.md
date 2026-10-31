@@ -73,6 +73,9 @@ right-angle plug heads up to 15 mm long (socket assumed 9.5 mm deep).
 to rectilinear (and whether 120° is horizontal or diagonal) changes coverage
 a lot (F-003). Settled by `calibrate_intrinsics.py` on day one; until then
 `config/cameras.yaml` assumes equidistant, the conservative case.
+**Hint, 2026-10-31:** fitting an equidistant lens to the overlaps of four
+cameras on the bench (D-017) gives **110°** horizontal, not 120°. Board
+calibration still to do; if 110° holds, rerun the coverage report (F-003).
 
 ### F-006 · Flashing host
 SDK Manager needs an **x86_64 Ubuntu** host; the owner's Mac is Apple
@@ -197,6 +200,21 @@ isochronous alternate setting; the cameras' other formats. **Fallback:**
 USB 2 is enough for 4K15 MJPEG per camera if each has its own USB 2 path,
 which needs a different wiring plan than D-011. Owner input needed only
 if the fallback is the answer.
+
+**Later the same day:**
+* **Jetson USB-A ports 1 and 2 never link at USB 3** (their SuperSpeed
+  side stays "not attached" with anything plugged in), which is why the
+  RSH-H7C ran at USB 2 all morning. Ports 3 and 4 do; the hub in port 3
+  links at 10000M. Port numbers are the kernel's (`2-1-portN`); which
+  physical sockets they are is still to map.
+* Disabling a camera's SuperSpeed port in sysfs doesn't make it fall back
+  to USB 2; it just disconnects (re-enabled, it comes back).
+* **Working layout, 4 cameras:** all on the hub, hub in Jetson port 3.
+  North and south link at 5000M through the hub, up and east at 480M
+  (their cable/plug). All four stream together into the dome at a steady
+  15 fps output (USB 2 cameras 15 fps, USB 3 ones 12.5–14.5). Two USB 3
+  cameras behind the hub coexist; on the Jetson's own ports 3 and 4 they
+  starved each other.
 
 ---
 
@@ -446,6 +464,24 @@ WebRTC** (mediamtx's page) at 15.2 fps with no dropped frames, so D-014's
 "two halves" fallback isn't needed there; Safari and phones still to try.
 Not yet: per-camera exposure matching (seams show where auto exposure
 differs), manual orientation from the UI, the web app, the ring buffer.
+
+### D-017 · Camera pointing from the overlaps (2026-10-31)
+`tools/align_from_overlap.py` (`overlap_align.py`) measures how the
+cameras really point: SIFT matches between every pair of stills,
+per-pair RANSAC rotation, then all rotations refined together (robust
+Gauss-Newton). It writes `config/calibration/extrinsics.yaml`, the file
+handoff §5.3 names for alignment, which the stitch now prefers over the
+nominal pointing. `--frame nominal` turns the solved set to best fit the
+mount design (the rig); `--frame centered` puts loose bench cameras'
+mean view at the zenith. Until a lens has a board calibration, it also
+fits one shared field of view to the overlaps (`lens_hfov_deg`, used by
+the stitch). It's the daylight complement to plate solving: it fixes the
+cameras relative to each other, the stars fix north and level.
+On the bench (4 cameras, a garage 1–4 m away) it lands within ~0.5° RMS;
+the rest is parallax between camera positions, which vanishes on the sky.
+Also from camera day: the dome now addresses cameras by
+`/dev/v4l/by-path/…` (USB port), because replugging the hub swapped
+`/dev/videoN` numbers.
 
 ---
 

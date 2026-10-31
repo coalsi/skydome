@@ -67,16 +67,23 @@ def cmd_board(args) -> None:
           f"(board {board.squares_x * board.square_mm:.0f} x {board.squares_y * board.square_mm:.0f} mm)")
 
 
+def _complete_jpeg(p: Path) -> bool:
+    """Start and end markers present: USB 3 capture can deliver truncated
+    frames (DECISIONS.md F-010)."""
+    data = p.read_bytes()
+    return len(data) > 1000 and data[:2] == b"\xff\xd8" and data.rstrip(b"\0")[-2:] == b"\xff\xd9"
+
+
 def grab(device: str, dest: Path, width: int, height: int) -> bool:
     """One full-res MJPEG frame, saved as-is (no decode). The first frames after
-    opening can be mid auto-exposure, so take a few and keep the last."""
+    opening can be mid auto-exposure, so take a few and keep the last complete one."""
     with tempfile.TemporaryDirectory() as tmp:
         cmd = ["gst-launch-1.0", "-q", "v4l2src", f"device={device}", "num-buffers=8", "!",
                f"image/jpeg,width={width},height={height}", "!", "multifilesink", f"location={tmp}/f%02d.jpg"]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        frames = sorted(Path(tmp).glob("f*.jpg"))
+        frames = [f for f in sorted(Path(tmp).glob("f*.jpg")) if _complete_jpeg(f)]
         if r.returncode != 0 or not frames:
-            sys.stderr.write(r.stderr[-500:])
+            sys.stderr.write(r.stderr[-500:] or f"{device}: no complete frame in 8\n")
             return False
         shutil.copy(frames[-1], dest)
         return True
