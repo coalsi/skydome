@@ -6,6 +6,10 @@
 
 dome:
   size: 4096          # all-sky canvas, constant across modes
+  # Zenith angle at the edge of the dome circle. 90 = horizon at the edge
+  # (handoff §5.4); 100 = 10° below it, so the side cameras' lower corners
+  # aren't cut off and the horizon is a circle at 90% radius (DECISIONS.md D-018)
+  edge_zenith_deg: 100
   equirect: [8192, 2048]
 
 modes:

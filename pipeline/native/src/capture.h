@@ -7,6 +7,7 @@
 // so the dome keeps running on the other cameras (handoff §5.1).
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -44,6 +45,8 @@ public:
 
     // Frames received since the last call (for fps reporting)
     uint64_t take_frame_count();
+    // Damaged frames dropped before decoding since the last call (F-010)
+    uint64_t take_dropped() { return dropped_.exchange(0); }
     uint64_t restarts() const { return restarts_; }
 
 private:
@@ -69,4 +72,5 @@ private:
 
     uint64_t frames_ = 0;
     uint64_t restarts_ = 0;
+    std::atomic<uint64_t> dropped_{0};     // written from the streaming thread
 };

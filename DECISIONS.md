@@ -215,6 +215,15 @@ if the fallback is the answer.
   15 fps output (USB 2 cameras 15 fps, USB 3 ones 12.5–14.5). Two USB 3
   cameras behind the hub coexist; on the Jetson's own ports 3 and 4 they
   starved each other.
+* **Damaged frames (the owner saw fast streaks):** of 150 frames per
+  camera, the USB 3 ones had 17 and 14 damaged JPEGs (cut short, or
+  holes: missing restart markers); the USB 2 ones none. Fixed in the
+  capture path: every MJPEG frame is checked before the hardware decoder
+  (start/end markers and the 269 restart markers these cameras write,
+  in order: a byte scan, no decoding) and dropped if damaged; the dome
+  keeps that camera's last good frame. `skydome-jpeg-check` agreed with a
+  full libjpeg decode on all 600 recorded frames. Drops show in the live
+  stats as "damaged dropped".
 
 ---
 
@@ -482,6 +491,17 @@ the rest is parallax between camera positions, which vanishes on the sky.
 Also from camera day: the dome now addresses cameras by
 `/dev/v4l/by-path/…` (USB port), because replugging the hub swapped
 `/dev/videoN` numbers.
+
+### D-018 · Dome edge 10° below the horizon (owner, 2026-10-31)
+Handoff §5.4 puts the horizon at the edge of the dome image. With the
+side cameras at ~33° elevation, their lower corners reach 6–10° below the
+horizon (about 3% of each side image), which that cut off. The owner wants
+to see every pixel, so the edge is now a setting, `dome.edge_zenith_deg`
+in `config/modes.yaml`, set to **100**: the horizon is a circle at 90% of
+the radius, and the sky gets ~10% fewer pixels per degree (20.5 instead
+of 22.8 px/° at 4096²). Set it back to 90 for the handoff's layout. It's
+stored in the stitch table header, so overlays and plate solving read the
+same value.
 
 ---
 

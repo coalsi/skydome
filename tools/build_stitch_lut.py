@@ -4,8 +4,8 @@
     uv run --project pipeline tools/build_stitch_lut.py              # 4096 and 2048
     uv run --project pipeline tools/build_stitch_lut.py --size 4096
 
-Uses config/cameras.yaml for pointing and config/calibration/<name>.yaml
-for lenses that have been calibrated (the nominal 120° model otherwise).
+Uses config/cameras.yaml for pointing, config/calibration/ for measured
+lenses and pointing, and the dome edge from config/modes.yaml.
 Writes var/stitch_<size>.lut. Rerun after calibrating a lens or changing
 the camera pointing; tools/run_live.py does it automatically when the
 config is newer than the table.
@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "pipeline"))
 
-from skydome_pipeline.config import calibrated_cameras  # noqa: E402
+from skydome_pipeline.config import calibrated_cameras, load_modes  # noqa: E402
 from skydome_pipeline.gpu_lut import build_grid_lut  # noqa: E402
 from skydome_pipeline.projection import AllSkyProjection  # noqa: E402
 
@@ -33,7 +33,7 @@ def lut_path(size: int) -> Path:
 def config_inputs() -> list[Path]:
     """Files the tables depend on, for staleness checks."""
     cfg = ROOT / "config"
-    return [cfg / "cameras.yaml", *sorted((cfg / "calibration").glob("*.yaml"))]
+    return [cfg / "cameras.yaml", cfg / "modes.yaml", *sorted((cfg / "calibration").glob("*.yaml"))]
 
 
 def is_stale(size: int) -> bool:
@@ -47,11 +47,12 @@ def is_stale(size: int) -> bool:
 def build(size: int, step: int = 8) -> Path:
     cams = calibrated_cameras(ROOT / "config")
     t0 = time.monotonic()
-    glut = build_grid_lut(AllSkyProjection(size=size), cams, step=step)
+    edge = load_modes(ROOT / "config").dome.edge_zenith_deg
+    glut = build_grid_lut(AllSkyProjection(size=size, edge_zenith_deg=edge), cams, step=step)
     out = lut_path(size)
     out.parent.mkdir(exist_ok=True)
     glut.save(out)
-    print(f"Wrote {out.relative_to(ROOT)} ({out.stat().st_size / 1e6:.1f} MB, "
+    print(f"Wrote {out.relative_to(ROOT)} (edge {edge:g}° from zenith, {out.stat().st_size / 1e6:.1f} MB, "
           f"{glut.nodes}x{glut.nodes} nodes, {time.monotonic() - t0:.1f} s)")
     return out
 

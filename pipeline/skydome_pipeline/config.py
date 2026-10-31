@@ -85,8 +85,15 @@ class Mode(BaseModel):
     capture: Capture
 
 
+class Dome(BaseModel):
+    model_config = {"extra": "allow"}
+    size: int = 4096
+    edge_zenith_deg: float = Field(default=90.0, ge=60, le=180)
+
+
 class ModesConfig(BaseModel):
     model_config = {"extra": "allow"}
+    dome: Dome = Dome()
     modes: dict[str, Mode]
 
 

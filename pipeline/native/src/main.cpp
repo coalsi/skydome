@@ -123,10 +123,13 @@ void report(const Options& o, std::vector<std::unique_ptr<CameraSource>>& cams, 
         if (!cp) continue;
         CameraSource& c = *cp;
         const double fps = c.take_frame_count() / secs;
-        std::snprintf(buf, sizeof buf, " %s %.1f %s", c.name().c_str(), fps, c.state());
+        const uint64_t dropped = c.take_dropped();
+        std::snprintf(buf, sizeof buf, " %s %.1f %s%s", c.name().c_str(), fps, c.state(),
+                      dropped ? (" (" + std::to_string(dropped) + " damaged dropped)").c_str() : "");
         line += buf;
         json += (first ? "" : ",") + std::string("\"") + c.name() + "\":{\"fps\":" + std::to_string(fps) +
-                ",\"state\":\"" + c.state() + "\",\"restarts\":" + std::to_string(c.restarts()) + "}";
+                ",\"state\":\"" + c.state() + "\",\"restarts\":" + std::to_string(c.restarts()) +
+                ",\"damaged_dropped\":" + std::to_string(dropped) + "}";
         first = false;
     }
     json += "}}\n";

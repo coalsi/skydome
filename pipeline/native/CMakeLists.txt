@@ -28,10 +28,12 @@ target_include_directories(skydome_stitch PUBLIC src)
 target_link_libraries(skydome_stitch PUBLIC CUDA::cudart)
 target_compile_options(skydome_stitch PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3 --use_fast_math>)
 
-add_executable(skydome-live src/main.cpp src/capture.cpp src/encoder.cpp)
+add_executable(skydome-live src/main.cpp src/capture.cpp src/encoder.cpp src/jpeg_check.cpp)
 target_include_directories(skydome-live PRIVATE ${MMAPI}/include)
 target_link_libraries(skydome-live PRIVATE skydome_stitch PkgConfig::GST PkgConfig::EGL CUDA::cuda_driver ${NVBUFSURFACE})
 target_compile_options(skydome-live PRIVATE -Wall -Wextra -O2)
 
 add_executable(skydome-stitch-files src/stitch_files.cpp)
 target_link_libraries(skydome-stitch-files PRIVATE skydome_stitch)
+
+add_executable(skydome-jpeg-check src/jpeg_check_main.cpp src/jpeg_check.cpp)

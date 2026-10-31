@@ -1,5 +1,7 @@
 #include "capture.h"
 
+#include "jpeg_check.h"
+
 #include <cstdio>
 #include <sys/stat.h>
 
@@ -23,7 +25,7 @@ std::string pipeline_desc(const std::string& device, const CaptureFormat& f) {
     if (f.kind == CaptureFormat::Kind::MJPEG) {
         // Hardware JPEG decode straight into NVMM (Y42B for these cameras)
         std::snprintf(buf, sizeof buf,
-                      "v4l2src device=%s io-mode=2 do-timestamp=true "
+                      "v4l2src name=src device=%s io-mode=2 do-timestamp=true "
                       "! image/jpeg,width=%d,height=%d,framerate=%d/1 "
                       "! nvv4l2decoder mjpeg=1 "
                       "! appsink name=sink max-buffers=1 drop=true sync=false",
@@ -38,6 +40,21 @@ std::string pipeline_desc(const std::string& device, const CaptureFormat& f) {
                       device.c_str(), f.width, f.height, f.fps);
     }
     return buf;
+}
+
+// Drops damaged MJPEG frames before the decoder: decoded, they show up as
+// streaks (F-010). The dome keeps the camera's last good frame meanwhile.
+GstPadProbeReturn check_frame(GstPad*, GstPadProbeInfo* info, gpointer user) {
+    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    if (!buf) return GST_PAD_PROBE_OK;
+    GstMapInfo m;
+    if (!gst_buffer_map(buf, &m, GST_MAP_READ)) return GST_PAD_PROBE_OK;
+    const JpegCheck c = GST_BUFFER_FLAG_IS_SET(buf, GST_BUFFER_FLAG_CORRUPTED) ? JpegCheck::NoEnd
+                                                                               : check_jpeg(m.data, m.size);
+    gst_buffer_unmap(buf, &m);
+    if (c == JpegCheck::Ok) return GST_PAD_PROBE_OK;
+    static_cast<std::atomic<uint64_t>*>(user)->fetch_add(1);
+    return GST_PAD_PROBE_DROP;
 }
 
 }  // namespace
@@ -73,6 +90,13 @@ void CameraSource::start(Clock::time_point now) {
         return;
     }
     sink_ = gst_bin_get_by_name(GST_BIN(pipeline_), "sink");
+    if (fmt_.kind == CaptureFormat::Kind::MJPEG) {
+        GstElement* src = gst_bin_get_by_name(GST_BIN(pipeline_), "src");
+        GstPad* pad = gst_element_get_static_pad(src, "src");
+        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, check_frame, &dropped_, nullptr);
+        gst_object_unref(pad);
+        gst_object_unref(src);
+    }
     if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         std::fprintf(stderr, "[%s] %s won't start\n", name_.c_str(), device_.c_str());
         stop();
