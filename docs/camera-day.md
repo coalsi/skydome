@@ -69,6 +69,15 @@ ls -l /dev/skycam-*
 
 From now on, don't move cables between ports.
 
+Then watch the live dome (D-016): build once, start it, open
+http://skydome.local:8889/dome. Until the rig is in its mount the picture
+is a jumble of five views; that's expected.
+
+```bash
+cmake -S pipeline/native -B pipeline/native/build && cmake --build pipeline/native/build -j
+uv run --project pipeline tools/run_live.py
+```
+
 ## 5 · Calibrate one lens (30 min, settles F-005)
 
 All five cameras use the same lens, so one careful calibration answers the
@@ -108,8 +117,9 @@ need: camera names, exposure limits and the lens model.
 ## Then: the build order
 
 1. **Phase 1**, the live dome: capture → CUDA stitch → H.264 4096² @15
-   (D-014) → mediamtx → WebRTC page, with manual orientation from the mount
-   design.
+   → mediamtx is working (D-016). Still to come: exposure matching
+   across cameras, manual orientation and mode switching from the web
+   app, the ring buffer.
 2. **Phase 2**: plate solving, auto-align from the stars, overlays,
    Deep-mode stacking, timelapse, ONVIF for the NVR.
 3. **Phase 3**: meteor/transient detection, nightly report.

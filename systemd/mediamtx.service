@@ -1,0 +1,15 @@
+# Stream server for the live dome (config/mediamtx.yml).
+#   sudo cp systemd/mediamtx.service /etc/systemd/system/ && sudo systemctl enable --now mediamtx
+[Unit]
+Description=SkyDome stream server (mediamtx)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=skydome
+ExecStart=/usr/local/bin/mediamtx /home/skydome/skydome/config/mediamtx.yml
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

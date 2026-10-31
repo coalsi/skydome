@@ -1,0 +1,32 @@
+# mediamtx (v1.21) for SkyDome: skydome-live publishes the dome over RTSP;
+# mediamtx serves it to browsers (WebRTC/WHEP), the LAN (RTSP) and HLS
+# (handoff §5.7). Anything not set here keeps mediamtx's default.
+#
+#   rtsp://skydome.local:8554/dome         NVR, VLC, ffplay
+#   http://skydome.local:8889/dome         WebRTC (mediamtx's test page; WHEP at /dome/whep)
+#   http://skydome.local:8888/dome         HLS fallback
+#
+# LAN only, no auth (handoff §5.7: basic auth optional, off by default).
+
+logLevel: info
+
+api: true
+apiAddress: 127.0.0.1:9997
+
+rtsp: true
+rtspAddress: :8554
+rtmp: false
+srt: false
+
+webrtc: true
+webrtcAddress: :8889
+hls: true
+hlsAddress: :8888
+
+paths:
+  # Detail, 4096² × 15 (D-014); the NVR's stream (D-015)
+  dome:
+    source: publisher
+  # Smooth, 2048² × 30, while the UI's Smooth switch is on
+  dome-smooth:
+    source: publisher

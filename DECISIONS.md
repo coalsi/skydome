@@ -177,6 +177,27 @@ nights. The software side is D-015. What software can't fix:
 "no heaters / no weatherproofing" scope (e.g. a passive dew shield or a
 small lens-window heater).
 
+### F-010 · USB 3 camera capture drops frames; USB 2 runs clean (2026-10-31)
+Handoff §2.1 wants every camera at 5000M. On camera day the opposite
+showed up, with 4 cameras on the bench (one camera's USB-C socket was
+broken by the Jetson's fan, see the enclosure repo; a backup is ordered):
+* Cameras that linked at **USB 2** (480M, by accident: plugs not fully
+  seated) captured 4K MJPEG cleanly: 589 frames, 0 errors (uvcvideo
+  stats). Two of them share one USB 2 path through the RSH-H7C at
+  ~12.6 fps each at 4K15, 30 fps each at 4K30 in the live pipeline.
+* Cameras at **USB 3** (5000M, isochronous alt setting 7) lose frames:
+  13 errors in 92 frames, uneven rates (7–25 fps when 15 is asked), and
+  the kernel logs `tegra-xusb: WARN Event TRB for slot N ep 2 with no TDs
+  queued?`. With **two** USB 3 cameras streaming, the second gets almost
+  nothing (2 frames in 15 s); the live pipeline restarts it in a loop.
+* Not the new software: plain `v4l2-ctl --stream-mmap` shows the same.
+**To try when all five are cabled:** reseat so every link is what we
+expect; `usbcore.autosuspend=-1`; uvcvideo `quirks`/`nodrop`; capping the
+isochronous alternate setting; the cameras' other formats. **Fallback:**
+USB 2 is enough for 4K15 MJPEG per camera if each has its own USB 2 path,
+which needs a different wiring plan than D-011. Owner input needed only
+if the fallback is the answer.
+
 ---
 
 ## Decisions
@@ -380,6 +401,52 @@ controllable from the web app when wanted.
   hand holds until released or until the next Auto transition, whichever
   the user picks.
 
+### D-016 · Live dome pipeline: zero-copy GPU stitch (2026-10-31)
+Phase 1's hot path, `pipeline/native` (C++/CUDA, handoff §4), started by
+`tools/run_live.py`:
+* **Capture:** per camera `v4l2src → nvv4l2decoder mjpeg=1` (hardware
+  JPEG). The decoder's output is pitch-linear planar **Y42B** (4:2:2) in
+  NVMM. `NvBufSurfaceMapCudaBuffer` is "not supported on this platform"
+  on the Orin Nano, so frames reach CUDA through
+  `NvBufSurfaceMapEglImage` + `cuGraphicsEGLRegisterImage`: no copy,
+  verified pixel-identical to a CPU read. The newest frame per camera is
+  held; nothing queues.
+* **Stitch:** one CUDA kernel per plane remaps and feather-blends all
+  cameras straight from those buffers into an I420 dome, in YUV (no RGB
+  round trip). Tables per D-005 on an 8 px grid (513² nodes, 10.8 MB for
+  4096²; interpolation error < 0.01 px), built by Python
+  (`gpu_lut.py`, `tools/build_stitch_lut.py`) and consumed by the kernel;
+  the feather weight is computed per pixel from the interpolated
+  coordinates. A per-cell mask means most pixels touch 1–2 cameras.
+  `gpu_lut.grid_stitch` is the kernel's NumPy twin; tests check
+  twin = full-resolution reference and kernel = twin (±1 level).
+* **Missing cameras** are left out per frame and the rest renormalised,
+  so the dome keeps running on four (handoff §5.1). A camera that errors
+  or stops sending is torn down and retried every 3 s.
+* **One table for every capture size:** coordinates scale to the frame's
+  real size, so 1080p binned capture (same field of view, confirmed on
+  camera day) uses the 4K tables.
+* **Output:** the GPU writes into pinned host memory that x264 reads
+  directly (no copy) → `x264enc` ultrafast/zerolatency → RTSP into
+  mediamtx (`config/mediamtx.yml`): `/dome` (Detail) and `/dome-smooth`.
+  Full-range BT.601 is kept from the JPEG decode and flagged in the
+  stream. `jetson_clocks` runs while it's up.
+
+Measured 2026-10-31 on the Jetson with 3 live cameras (the 4th is
+F-010's starved USB 3 camera), `jetson_clocks` on:
+
+| mode | output | stitch | CPU | GPU |
+|---|---|---|---|---|
+| Detail 4096² | 15.0 fps steady | 9.3 ms | 52% | 15% |
+| Smooth 2048² | 30.0 fps steady | 2.7 ms | — | — |
+
+Kernel alone with five 4K inputs (random noise, worst case): 12.4 ms at
+4096², 3.2 ms at 2048². **Chrome on macOS plays the 4096² stream over
+WebRTC** (mediamtx's page) at 15.2 fps with no dropped frames, so D-014's
+"two halves" fallback isn't needed there; Safari and phones still to try.
+Not yet: per-camera exposure matching (seams show where auto exposure
+differs), manual orientation from the UI, the web app, the ring buffer.
+
 ---
 
 ## Open questions (handoff §8)
@@ -415,7 +482,26 @@ controllable from the web app when wanted.
   3 hubs deep (onboard → hub 1 → hub 2); USB allows 5. Which of the
   hub's ports 4–6 sit on which chip is mapped on camera day.
 
-*Cameras not connected yet.* On camera day:
-`tools/bringup/phase0.sh --gst`, then paste `reports/phase0-*/summary.md`
-here: USB tree speeds, V4L2 format lists, real exposure/gain ranges, and the
-5× MJPEG 4K30 and 5× YUY2 1080p load-test results.
+**Cameras (2026-10-31, 4 of 5; `phase0.sh --gst`, report on the Jetson):**
+* USB ID 32e4:6678 "4K U3 Camera", UVC 1.00. **All five report the same
+  serial number (2601230006)**, so they can only be told apart by USB
+  port (`ID_PATH`), as planned (handoff §2.1 rule 3).
+* Formats: MJPEG 3840×2160 at 60/30/25/23/20/15/10 fps and smaller sizes
+  (2880×2160, 2592×1944, 2560×1440, 2048×1536, …, 1920×1080 up to 60);
+  YUY2 3840×2160 only at ≤ 23 fps (never used, §9), YUY2 1920×1080 offered.
+* **1080p is binned, not cropped:** the 1920×1080 and 3840×2160 frames
+  show the same field of view (`fov-video0-*.jpg`).
+* Controls: `exposure_time_absolute` 1–10000 (×100 µs, so **up to 1 s**),
+  `gain` 0–190 (default 140), `auto_exposure` manual (1) or aperture
+  priority (3), white balance auto or 2800–6500 K, `power_line_frequency`
+  defaults to **50 Hz** (set it to 60 Hz or off), plus focus/zoom/pan/tilt
+  controls the fixed M12 lens ignores.
+* Hardware MJPEG decode of 4K costs no measurable GPU and little CPU.
+* USB: see F-010. The cameras link at 5000M when seated, but capture is
+  only clean at 480M so far. Indoors in a dim room, auto exposure also
+  lowers the frame rate (aperture-priority mode stretches the shutter).
+* Load test, 4 cameras: 4K30 MJPEG 30 fps on three, the fourth starved
+  (F-010); YUY2 1080p15 not negotiated on the USB 2 links (expected:
+  uncompressed 1080p doesn't fit USB 2).
+* Still to do with all five on final cabling: the full 5× load tests,
+  USB tree at 5000M for every camera, and the F-010 experiments.

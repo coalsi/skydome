@@ -1,0 +1,18 @@
+# The live dome (Phase 1): cameras -> GPU stitch -> H.264 -> mediamtx.
+# Enable once the cameras are named (/dev/skycam-*, docs/camera-day.md step 4):
+#   sudo cp systemd/skydome-live.service /etc/systemd/system/ && sudo systemctl enable --now skydome-live
+[Unit]
+Description=SkyDome live dome
+After=mediamtx.service
+Wants=mediamtx.service
+
+[Service]
+User=skydome
+WorkingDirectory=/home/skydome/skydome
+ExecStart=/home/skydome/.local/bin/uv run --project pipeline tools/run_live.py --stats-file /run/skydome/live.json
+RuntimeDirectory=skydome
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
