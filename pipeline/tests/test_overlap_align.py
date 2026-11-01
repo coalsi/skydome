@@ -15,7 +15,7 @@ LENS = FisheyeLens.from_hfov(3840, 2160, 120)
 def nominal_rig():
     cams = [Camera("zenith", LENS, camera_rotation(0, 90))]
     for name, az in [("north", 0), ("east", 90), ("south", 180), ("west", 270)]:
-        cams.append(Camera(name, LENS, camera_rotation(az, 35)))
+        cams.append(Camera(name, LENS, camera_rotation(az, 30)))
     return cams
 
 
@@ -110,7 +110,7 @@ def test_extrinsics_file_overrides_the_nominal_pointing(tmp_path):
     assert np.allclose(load_extrinsics(cfg)["zenith"], r)
     cams = {c.name: c for c in calibrated_cameras(cfg)}
     assert np.allclose(cams["zenith"].rotation, r)
-    assert np.allclose(cams["north"].rotation, camera_rotation(0, 35))
+    assert np.allclose(cams["north"].rotation, camera_rotation(0, 30))
 
 
 def test_bad_rotation_is_rejected(tmp_path):

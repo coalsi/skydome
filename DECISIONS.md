@@ -307,6 +307,7 @@ entry supersedes it. Reason: F-003. Applied:
   `coverage_report.py --png` maps use 35° by default.
 
 Auto-align still measures the real pointing; 35° is only the starting guess.
+**Superseded by D-019 (30°).**
 
 ### D-010 · JetPack 7.2.1, installed by ISO straight to NVMe (owner, 2026-10-28)
 Departs from handoff §4 (JetPack 6.x on Ubuntu 22.04); see F-007. Jetson
@@ -516,6 +517,23 @@ the radius, and the sky gets ~10% fewer pixels per degree (20.5 instead
 of 22.8 px/° at 4096²). Set it back to 90 for the handoff's layout. It's
 stored in the stitch table header, so overlays and plate solving read the
 same value.
+
+### D-019 · Side cameras at 30°, taller camera head (owner, 2026-10-31)
+Supersedes D-009's 35°. The bench fit of the lens (D-017, F-005 hint)
+says ~110° wide, not 120°, and at 35° a 110° lens leaves the bottom ~4°
+of sky uncovered all the way round (96.4% of the sky). At 30° the sky is
+covered down to the horizon (−0.8°) with no gaps, for any equidistant
+lens from 108° up; below ~106° a gap opens at ~60° altitude between the
+zenith and side cameras, so the board calibration should confirm ≥ 108°.
+Overlap seen by 2+ cameras goes from 46% to 41%.
+* `../skycam_mount.scad`: `tilt = 60`, window walls lean 15°, and a new
+  26 mm straight `riser_h` wall above the skirt lifts every camera and its
+  USB-C plug ~28–30 mm clear of the Jetson's fan with the original 52 mm
+  tray (the 78 mm tray from earlier the same day is dropped). The west
+  camera now installs socket edge uphill (north-side grazed its window at
+  60°). All eight fit checks pass. Hub 183.6 × 183.6 × 83.3 mm.
+* `config/cameras.yaml`: side `alt_deg: 30`; tests and coverage defaults
+  follow.
 
 ---
 

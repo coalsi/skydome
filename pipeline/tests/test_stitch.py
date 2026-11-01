@@ -15,7 +15,7 @@ SCALE = 0.125      # 480 x 270 camera images
 DOME = 512
 
 
-def rig(lens_cls, side_alt=35.0, perturb=None):  # as built, DECISIONS.md D-009
+def rig(lens_cls, side_alt=30.0, perturb=None):  # as built, DECISIONS.md D-019
     lens = lens_cls.from_hfov(3840, 2160, 120)
     perturb = perturb or {}
     cams = [Camera("zenith", lens, camera_rotation(0, 90))]

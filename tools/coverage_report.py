@@ -94,8 +94,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hfov", type=float, default=120.0)
     ap.add_argument("--png", type=Path, help="write landscape coverage maps, one per lens model")
-    ap.add_argument("--side-alt", type=float, default=35.0,
-                    help="side-camera elevation for the --png maps (as built: 35, DECISIONS.md D-009)")
+    ap.add_argument("--side-alt", type=float, default=30.0,
+                    help="side-camera elevation for the --png maps (as built: 30, DECISIONS.md D-019)")
     args = ap.parse_args()
 
     print(f"5-camera rig, {args.hfov:.0f} deg HFOV, 16:9 sensor")
