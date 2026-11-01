@@ -326,6 +326,9 @@ USB-A ports share the carrier's one 10 Gbps link either way, so this costs
 no bandwidth and keeps three cameras running if the hub fails. Cameras
 are named by physical port (udev `ID_PATH`), so cables must not move
 between ports after `identify_cameras.py` has run.
+**Superseded (2026-10-31/11-01):** no USB hub. After F-010 the 4 side
+cameras go in the Jetson's USB-A ports and the zenith camera in its USB-C
+port; the enclosure's tray no longer has room for the hub.
 
 ### D-012 · Mast: a photography light stand (owner, 2026-10-29)
 Resolves F-002. The standard light-stand top is a 5/8″ (16 mm) spigot
@@ -336,6 +339,9 @@ the stand. Check that the stand's threaded tip is at most ~9 mm long (the
 insert hole is 9.5 mm deep). Outdoors, weigh the stand's legs down
 (sandbag) against wind. Handoff §2's pipe-mast text stays as written; this
 entry supersedes it.
+**Dropped (owner, 2026-11-01):** the tray has no centre pole mount any
+more (that let it shrink from 52 to 27 mm); the rig stands on its magnet
+feet.
 
 ### D-013 · Site, time and settings come from the web UI (owner, 2026-10-29)
 No coordinates in the repo. On first start the web app shows a **setup
