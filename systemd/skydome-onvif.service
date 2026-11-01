@@ -1,0 +1,18 @@
+# ONVIF camera for NVRs (D-020): discovery, the dome stream, snapshots and
+# imaging settings for all cameras. Port 80 via CAP_NET_BIND_SERVICE.
+#   sudo cp systemd/skydome-onvif.service /etc/systemd/system/ && sudo systemctl enable --now skydome-onvif
+[Unit]
+Description=SkyDome ONVIF camera
+After=network-online.target mediamtx.service
+Wants=network-online.target
+
+[Service]
+User=skydome
+WorkingDirectory=/home/skydome/skydome
+ExecStart=/home/skydome/.local/bin/uv run --project pipeline tools/run_onvif.py
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -24,6 +24,7 @@
 #include "capture.h"
 #include "encoder.h"
 #include "lut.h"
+#include "snapshot.h"
 #include "stitch.h"
 
 namespace {
@@ -36,6 +37,7 @@ struct Options {
     CaptureFormat capture;
     EncoderConfig enc;
     std::string stats_file;
+    std::string snapshot;   // JPEG stills on request (snapshot.h)
     long max_frames = 0;   // 0 = run until stopped
 };
 
@@ -49,6 +51,7 @@ void usage() {
                  "  --sink DESC          GStreamer sink after h264parse (default RTSP to mediamtx /dome)\n"
                  "  --no-encode          stitch only (benchmark)\n"
                  "  --stats-file PATH    write JSON stats every 2 s\n"
+                 "  --snapshot PATH      write a JPEG of the dome to PATH whenever PATH.request appears\n"
                  "  --frames N           stop after N output frames\n");
 }
 
@@ -80,6 +83,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--sink") o.enc.sink = next();
         else if (a == "--no-encode") o.enc.encode = false;
         else if (a == "--stats-file") o.stats_file = next();
+        else if (a == "--snapshot") o.snapshot = next();
         else if (a == "--frames") o.max_frames = std::stol(next());
         else if (a == "-h" || a == "--help") {
             usage();
@@ -163,6 +167,8 @@ int run(int argc, char** argv) {
     }
     FramePool pool(lut.size, 4);
     Encoder enc(ec);
+    std::unique_ptr<Snapshot> snap;
+    if (!o.snapshot.empty()) snap = std::make_unique<Snapshot>(o.snapshot, lut.size);
     cudaStream_t stream;
     cuda_check(cudaStreamCreate(&stream), "cudaStreamCreate");
 
@@ -195,6 +201,7 @@ int run(int argc, char** argv) {
                 const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
                 st.stitch_ms += ms;
                 st.stitch_ms_max = std::max(st.stitch_ms_max, ms);
+                if (snap && snap->requested()) snap->take(f->host, f->bytes);
                 if (!enc.push(f)) ++st.push_failed;
                 ++st.out_frames;
                 if (o.max_frames && ++produced >= o.max_frames) break;

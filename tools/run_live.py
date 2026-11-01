@@ -15,8 +15,10 @@ Cameras are found as /dev/skycam-<name> (udev rules from
 tools/gen_udev_rules.py), else by the id_path in config/cameras.yaml, else
 from --camera NAME=DEVICE. Missing cameras are left out; skydome-live picks
 them up when they appear. Rebuilds var/stitch_<size>.lut when the camera
-config or a lens calibration is newer. Runs jetson_clocks while it's up
-(D-014) if sudo allows it without a password, and restores the clocks after.
+config or a lens calibration is newer. Stills for ONVIF's GetSnapshotUri
+go to --snapshot when asked for (tools/run_onvif.py). Runs jetson_clocks
+while it's up (D-014) if sudo allows it without a password, and restores
+the clocks after.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from skydome_pipeline.config import load_cameras  # noqa: E402
 
 BINARY = ROOT / "pipeline" / "native" / "build" / "skydome-live"
 CLOCKS_STORE = Path("/var/tmp/skydome-clocks.conf")
+SNAPSHOT = "/tmp/skydome-snapshot.jpg"   # tools/run_onvif.py serves it
 
 # D-014: Detail is the default; Smooth trades resolution for frame rate
 MODES = {
@@ -75,6 +78,7 @@ def main() -> int:
     ap.add_argument("--bitrate", type=int, help="H.264 kbps (default by mode)")
     ap.add_argument("--no-clocks", action="store_true", help="don't run jetson_clocks")
     ap.add_argument("--stats-file", default="/tmp/skydome-live.json")
+    ap.add_argument("--snapshot", default=SNAPSHOT, help="JPEG still, written when PATH.request appears")
     args, extra = ap.parse_known_args()
 
     if not BINARY.exists():
@@ -91,6 +95,7 @@ def main() -> int:
 
     cmd = [str(BINARY), "--lut", str(lut), "--fps", str(mode["fps"]), "--capture", mode["capture"],
            "--bitrate", str(args.bitrate or mode["bitrate"]), "--stats-file", args.stats_file,
+           "--snapshot", args.snapshot,
            "--sink", f"rtspclientsink location=rtsp://127.0.0.1:8554/{mode['path']} protocols=tcp latency=0"]
     for name, dev in devices.items():
         cmd += ["--camera", f"{name}={dev}"]

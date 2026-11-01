@@ -535,6 +535,58 @@ Overlap seen by 2+ cameras goes from 46% to 41%.
 * `config/cameras.yaml`: side `alt_deg: 30`; tests and coverage defaults
   follow.
 
+### D-020 · ONVIF: a small Python service, imaging settings for all cameras (owner asked, 2026-11-01)
+Handoff §5.7 (ONVIF Profile S), brought forward from Phase 2 at the
+owner's request, "with controls via ONVIF where any apply".
+* **Custom, not rpos.** The handoff says to evaluate `rpos` first. It is a
+  Node.js server written around a single Raspberry Pi camera: it would add
+  Node to the Jetson, and the parts this rig needs (one imaging setting
+  driving five cameras, a snapshot from the GPU dome) would still have to
+  be written. The handoff's alternative, a minimal custom SOAP service,
+  is `server/skydome_server/onvif/` (stdlib + PyYAML, run with the
+  pipeline environment by `tools/run_onvif.py`, unit
+  `systemd/skydome-onvif.service`). Moves into the FastAPI server (§5.9)
+  when that exists.
+* **What it offers:** WS-Discovery (Probe/Resolve/Hello/Bye), Device
+  (information, capabilities, services, time, scopes, network), Media
+  ver10 with one fixed profile `dome` = the Detail stream
+  (`rtsp://<jetson>:8554/dome`, 4096² H.264 at 15 fps, D-014/D-015) and
+  `GetSnapshotUri`, and Imaging ver20. Port 80 (systemd grants
+  CAP_NET_BIND_SERVICE), so NVRs that assume 80 work.
+* **Snapshot:** full-resolution hardware JPEG (`nvjpegenc`) of the dome,
+  made by skydome-live on request (`--snapshot PATH`: the server creates
+  `PATH.request`, the next output frame is encoded to `PATH`). ~0.1 s,
+  no effect on the 15 fps output.
+* **Imaging = all five cameras at once** (D-015's shared exposure target):
+  exposure AUTO/MANUAL (MANUAL: time 100 µs–1 s, gain 0–190, the cameras'
+  own units and ranges), brightness, contrast, saturation, sharpness,
+  backlight compensation, white balance AUTO/MANUAL. Kept in
+  `var/camera_settings.yaml` and re-applied when a camera re-enumerates
+  (a replugged UVC camera forgets its controls). Not offered because the
+  cameras can't: focus (fixed M12), IR-cut filter, WDR, white-balance
+  gains (the cameras take a colour temperature instead; set
+  `white_balance_temperature` in the file), anti-flicker (ONVIF has no
+  field; set `power_line_frequency: 2` in the file for 60 Hz lights, the
+  cameras default to 50 Hz, Phase 0 findings). When D-015's Auto mode exists, ONVIF exposure AUTO
+  should mean "hand back to Auto" and MANUAL a manual override.
+* **Not offered:** PTZ, audio, events, I/O, profile editing.
+  `SetVideoEncoderConfiguration` succeeds only if the resolution, codec
+  and frame rate are unchanged (the stream never changes shape, D-015);
+  bitrate/GOP/quality an NVR pushes along are ignored. Time is chrony's
+  (`SetSystemDateAndTime` accepts NTP only).
+* **Login:** WS-Security UsernameToken (digest or text), single user in
+  `var/onvif_credentials.yaml` (mode 600), created as `admin` with a random
+  password on first start; `tools/run_onvif.py --set-password` changes it.
+  Nonces are single-use and the token's time must be within an hour.
+  The RTSP stream and the snapshot URL stay open on the LAN, as before
+  (handoff §5.7).
+* **Tested 2026-11-01:** the Mac's WS-Discovery probe lists SkyDome
+  next to the house's other cameras; onvif-zeep (the library Frigate uses)
+  reads the device, profile, stream and snapshot URIs, downloads the
+  snapshot, and its imaging changes reach every camera (`v4l2-ctl`
+  confirms); wrong passwords and out-of-range values are refused.
+  `server/tests`: 25 tests (24 on the Mac).
+
 ---
 
 ## Open questions (handoff §8)

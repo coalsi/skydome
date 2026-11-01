@@ -119,7 +119,7 @@ need: camera names, exposure limits and the lens model.
 1. **Phase 1**, the live dome: capture → CUDA stitch → H.264 4096² @15
    → mediamtx is working (D-016). Still to come: exposure matching
    across cameras, manual orientation and mode switching from the web
-   app, the ring buffer.
+   app, the ring buffer. ONVIF for the NVR is done early (D-020).
 2. **Phase 2**: plate solving, auto-align from the stars, overlays,
-   Deep-mode stacking, timelapse, ONVIF for the NVR.
+   Deep-mode stacking, timelapse.
 3. **Phase 3**: meteor/transient detection, nightly report.
