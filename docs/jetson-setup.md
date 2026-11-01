@@ -125,5 +125,23 @@ with the USB stick removed, and never cut power while it says Updating.
     The hub should appear at **10000M** (USB 3.2 Gen 2). At 5000M, the
     cable or port is limiting it. Send the output back.
 
-Next (Saturday, cameras): `tools/bringup/phase0.sh --gst`, then camera
-identification and udev names (README "Day one on the Jetson").
+## G · Camera USB power saving off (2 min, required)
+
+22. The cameras lose frames, or starve each other completely, while USB 3
+    link power management is on (DECISIONS.md F-010). Turn it off for
+    these cameras only, from boot, by adding the usbcore quirk to the
+    kernel command line:
+
+    ```bash
+    F=/boot/extlinux/extlinux.conf
+    sudo cp -p $F $F.before-usb-lpm
+    sudo sed -i "/^[[:space:]]*APPEND /{/usbcore.quirks/!s/\$/ usbcore.quirks=32e4:6678:k/}" $F
+    grep APPEND $F
+    ```
+
+    After the next reboot, `cat /sys/module/usbcore/parameters/quirks`
+    shows `32e4:6678:k` and every camera reports `disabled` in
+    `/sys/bus/usb/devices/<port>/power/usb3_hardware_lpm_u1`.
+
+Next (cameras): `tools/bringup/phase0.sh --gst`, then camera
+identification and udev names (`docs/camera-day.md`).

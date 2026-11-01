@@ -180,7 +180,21 @@ nights. The software side is D-015. What software can't fix:
 "no heaters / no weatherproofing" scope (e.g. a passive dew shield or a
 small lens-window heater).
 
-### F-010 · USB 3 camera capture drops frames; USB 2 runs clean (2026-10-31)
+### F-010 · USB 3 camera capture drops frames; USB 2 runs clean (2026-10-31) — **cause found: USB 3 link power management**
+**Resolution (evening):** USB 3 Link Power Management (U1/U2) was on for
+every camera and port. With it off, all four cameras straight into the
+Jetson's USB-A ports at 5000M streamed 195 frames each in 15 s
+(full 15 fps) with **0 damaged**; with it on, the same test gave one camera
+0 frames and the others 4–36 damaged (plain GStreamer, no SkyDome code).
+The live dome then ran all four on USB 3 at 15 fps with nothing dropped.
+Fix: the usbcore quirk `32e4:6678:k` (USB_QUIRK_NO_LPM) for these cameras,
+on the kernel command line so it holds from boot: added to
+`/boot/extlinux/extlinux.conf` on 2026-10-31 with the owner's OK (backup
+`extlinux.conf.before-usb-lpm`; `docs/jetson-setup.md` step 22). Corrections to the notes below: Jetson ports 1 and 2
+are fine (a USB 3 drive and the cameras link at 5000M there); the USB 2
+links came from cables and an L adapter that only carry USB 2.
+
+Original notes:
 Handoff §2.1 wants every camera at 5000M. On camera day the opposite
 showed up, with 4 cameras on the bench (one camera's USB-C socket was
 broken by the Jetson's fan, see the enclosure repo; a backup is ordered):
