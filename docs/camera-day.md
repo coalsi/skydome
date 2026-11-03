@@ -23,14 +23,17 @@ It should sit flat with the plug clear (the socket position in the model
 came from a photo). If it doesn't, stop and send a photo; the hub needs a
 tweak before printing.
 
-## 2 · Plug in (D-011) and check focus (15 min)
+## 2 · Plug in (F-010; no USB hub) and check focus (15 min)
 
-| Camera | Plug into |
-|---|---|
-| zenith, north, south | Jetson USB-A ports |
-| east, west | RSH-H7C hub ports 4–6 (switch only those on) |
+| Camera | Plug into | ID_PATH (as wired 2026-11-03) |
+|---|---|---|
+| zenith | Jetson USB-C | `platform-3610000.usb-usb-0:2:1.0` |
+| north | Jetson USB-A | `platform-3610000.usb-usb-0:1.2:1.0` |
+| east | Jetson USB-A | `platform-3610000.usb-usb-0:1.1:1.0` |
+| south | Jetson USB-A | `platform-3610000.usb-usb-0:1.3:1.0` |
+| west | Jetson USB-A | `platform-3610000.usb-usb-0:1.4:1.0` |
 
-Leave the Jetson's own USB-C port free. Then, on a bench or a table, point
+All five link at 5000M with the USB LPM quirk (F-010). Then, on a bench or a table, point
 each camera out a window at something far away and check focus in step 3's
 snapshots. The M12 lenses should be focused at infinity; if one is soft,
 turn its lens a few degrees at a time and re-snapshot.

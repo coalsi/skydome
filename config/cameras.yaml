@@ -25,17 +25,17 @@ lens:
 
 cameras:
   - name: zenith
-    id_path: null
+    id_path: platform-3610000.usb-usb-0:2:1.0
     pointing: {az_deg: 0, alt_deg: 90, roll_deg: 0}
   - name: north
-    id_path: null
+    id_path: platform-3610000.usb-usb-0:1.2:1.0
     pointing: {az_deg: 0, alt_deg: 30, roll_deg: 0}
   - name: east
-    id_path: null
+    id_path: platform-3610000.usb-usb-0:1.1:1.0
     pointing: {az_deg: 90, alt_deg: 30, roll_deg: 0}
   - name: south
-    id_path: null
+    id_path: platform-3610000.usb-usb-0:1.3:1.0
     pointing: {az_deg: 180, alt_deg: 30, roll_deg: 0}
   - name: west
-    id_path: null
+    id_path: platform-3610000.usb-usb-0:1.4:1.0
     pointing: {az_deg: 270, alt_deg: 30, roll_deg: 0}

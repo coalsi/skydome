@@ -14,7 +14,7 @@ note which ID_PATH belongs to which direction.
 The second form writes those ID_PATHs into config/cameras.yaml. Then run
 tools/gen_udev_rules.py to create the /dev/skycam-<name> links.
 
-Dry-run on the Jetson with no cameras (2026-10-29); untested with cameras.
+--assign used on the rig 2026-11-03 (ports found from the cameras' overlaps).
 """
 
 from __future__ import annotations
