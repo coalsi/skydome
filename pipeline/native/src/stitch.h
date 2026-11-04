@@ -19,7 +19,7 @@ struct PlanarImage {
     int height[3] = {0, 0, 0};
 };
 
-// I420 output: Y is size x size, U and V are size/2 x size/2, tightly packed.
+// I420 output: Y is width x height, U and V half that each way, tightly packed.
 struct I420Out {
     uint8_t* y = nullptr;
     uint8_t* u = nullptr;
@@ -32,6 +32,16 @@ struct CamCorrection {
     float gain = 1.f;
     float u = 0.f;
     float v = 0.f;
+};
+
+// Part of the dome canvas rendered at its own resolution: output pixel (x, y)
+// is canvas pixel (x0 + x * scale, y0 + y * scale). The whole dome is
+// {size, size, 0, 0, 1}; a zoomed view is a small rectangle at scale < 1,
+// sampled straight from the cameras (the table is a smooth grid, so the
+// finer sampling is real detail, not an enlarged dome).
+struct View {
+    int width, height;     // output pixels, even
+    float x0, y0, scale;
 };
 
 class GpuStitcher {
@@ -47,6 +57,11 @@ public:
     // inputs: one per table camera, in table order. Outside the dome circle,
     // and where no live camera sees the sky, the output is black.
     void run(const PlanarImage* inputs, const I420Out& out, cudaStream_t stream) const;
+    void run_view(const PlanarImage* inputs, const I420Out& out, const View& view, cudaStream_t stream) const;
+
+    // Hide the ground: horizon altitude (degrees) for each degree of azimuth
+    // from north through east, 360 values; anything else turns the mask off
+    void set_horizon(const std::vector<float>& alt_by_az);
 
     // Used from the next run() on; one per table camera. Default: none
     void set_corrections(const std::vector<CamCorrection>& corr);
@@ -56,6 +71,9 @@ private:
     int cam_w_[8], cam_h_[8];
     float feather_[8];
     CamCorrection corr_[8];
+    float edge_deg_;
+    float* d_horizon_ = nullptr;
+    bool has_horizon_ = false;
     float* d_u_ = nullptr;
     float* d_v_ = nullptr;
     uint8_t* d_mask_ = nullptr;

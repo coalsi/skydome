@@ -1,17 +1,24 @@
 // skydome-live: five cameras -> one live dome stream (handoff §4, Phase 1).
 //
-//   skydome-live --lut var/stitch_4096.lut --camera zenith=/dev/skycam-zenith ... [options]
+//   skydome-live --lut var/stitch_5120.lut --camera zenith=/dev/skycam-zenith ... [options]
 //
 // Normally started by tools/run_live.py, which builds the table and finds
 // the cameras. Each output tick takes the newest frame from every camera,
 // stitches them on the GPU and hands the dome to the encoder. A camera
 // without a frame is left out; the dome keeps running on the rest.
+//
+// On the side (DECISIONS.md D-023): full-detail stills from a bigger table
+// on request, a zoom stream of whatever part of the dome the web page is
+// zoomed into (rendered straight from the cameras), and a ground mask.
 
 #include <algorithm>
 #include <atomic>
 #include <csignal>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
+#include <sstream>
+#include <sys/stat.h>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -41,7 +48,48 @@ struct Options {
     std::string snapshot;   // JPEG stills on request (snapshot.h)
     long max_frames = 0;   // 0 = run until stopped
     bool balance = true;   // match brightness and colour between cameras (D-022)
+    std::string full_lut, full_snapshot;   // full-detail stills (both needed)
+    std::string zoom_file;                 // zoom requests from the web page
+    int zoom_w = 1600, zoom_h = 1200, zoom_bitrate = 8000;
+    std::string zoom_sink = "rtspclientsink location=rtsp://127.0.0.1:8554/dome-zoom protocols=tcp latency=0";
+    std::string horizon;                   // ground mask file
+    std::string raw_dir;                   // raw camera frames on request
 };
+
+// A request older than this means nobody is zoomed in any more; the zoom
+// encoder then stops after kZoomLinger (so a quick zoom out and in again
+// doesn't restart it)
+constexpr int kZoomFreshS = 4;
+constexpr auto kZoomLinger = std::chrono::seconds(15);
+
+// File modification time (seconds since the epoch), 0 if it isn't there
+time_t mtime(const std::string& path) {
+    struct stat st{};
+    return stat(path.c_str(), &st) == 0 ? st.st_mtime : 0;
+}
+
+// The web page writes "x0 y0 x1 y1": the zoomed rectangle in dome
+// coordinates (0..1 across the dome square), refreshed while it's zoomed
+bool read_zoom(const std::string& path, float r[4]) {
+    std::ifstream f(path);
+    return static_cast<bool>(f >> r[0] >> r[1] >> r[2] >> r[3]) && r[2] > r[0] && r[3] > r[1];
+}
+
+// 360 horizon altitudes (one per degree of azimuth, from north through
+// east), one or more per line, '#' starts a comment. Anything else: no mask
+std::vector<float> read_horizon(const std::string& path) {
+    std::ifstream f(path);
+    std::vector<float> alt;
+    std::string line;
+    while (std::getline(f, line)) {
+        line = line.substr(0, line.find('#'));
+        std::istringstream ls(line);
+        float v;
+        while (ls >> v) alt.push_back(v);
+    }
+    if (alt.size() != 360) alt.clear();
+    return alt;
+}
 
 void usage() {
     std::fprintf(stderr,
@@ -55,7 +103,16 @@ void usage() {
                  "  --stats-file PATH    write JSON stats every 2 s\n"
                  "  --snapshot PATH      write a JPEG of the dome to PATH whenever PATH.request appears\n"
                  "  --frames N           stop after N output frames\n"
-                 "  --no-balance         don't match brightness and colour between cameras\n");
+                 "  --no-balance         don't match brightness and colour between cameras\n"
+                 "  --full-lut FILE --full-snapshot PATH\n"
+                 "                       full-detail JPEG from the bigger table FILE whenever PATH.request appears\n"
+                 "  --zoom-file PATH     zoom rectangle requests (\"x0 y0 x1 y1\", dome 0..1) from the web page\n"
+                 "  --zoom-size WxH      zoom stream size (default 1600x1200)\n"
+                 "  --zoom-bitrate KBPS  zoom stream bitrate (default 8000)\n"
+                 "  --zoom-sink DESC     zoom stream sink (default RTSP to mediamtx /dome-zoom)\n"
+                 "  --horizon FILE       ground mask: 360 horizon altitudes; reread when it changes\n"
+                 "  --raw-dir DIR        when DIR/request appears, save each camera's next frame as sent\n"
+                 "                       (DIR/<camera>.jpg)\n");
 }
 
 Options parse(int argc, char** argv) {
@@ -89,6 +146,16 @@ Options parse(int argc, char** argv) {
         else if (a == "--snapshot") o.snapshot = next();
         else if (a == "--frames") o.max_frames = std::stol(next());
         else if (a == "--no-balance") o.balance = false;
+        else if (a == "--full-lut") o.full_lut = next();
+        else if (a == "--full-snapshot") o.full_snapshot = next();
+        else if (a == "--zoom-file") o.zoom_file = next();
+        else if (a == "--zoom-size") {
+            if (std::sscanf(next().c_str(), "%dx%d", &o.zoom_w, &o.zoom_h) != 2 || o.zoom_w % 2 || o.zoom_h % 2)
+                throw std::runtime_error("--zoom-size wants an even WxH");
+        } else if (a == "--zoom-bitrate") o.zoom_bitrate = std::stoi(next());
+        else if (a == "--zoom-sink") o.zoom_sink = next();
+        else if (a == "--horizon") o.horizon = next();
+        else if (a == "--raw-dir") o.raw_dir = next();
         else if (a == "-h" || a == "--help") {
             usage();
             std::exit(0);
@@ -111,7 +178,7 @@ struct Stats {
 };
 
 void report(const Options& o, std::vector<std::unique_ptr<CameraSource>>& cams, const Encoder& enc,
-            const PhotoBalance* balance, Stats& st, Clock::time_point now) {
+            const PhotoBalance* balance, const std::string& extra, Stats& st, Clock::time_point now) {
     const double secs = std::chrono::duration<double>(now - st.since).count();
     const double out_fps = st.out_frames / secs;
     const double avg_ms = st.out_frames ? st.stitch_ms / st.out_frames : 0;
@@ -148,7 +215,7 @@ void report(const Options& o, std::vector<std::unique_ptr<CameraSource>>& cams, 
     }
     json += "}";
     if (balance) json += ",\"balance_points\":" + std::to_string(balance->used());
-    json += "}\n";
+    json += extra + "}\n";
     std::fprintf(stderr, "%s\n", line.c_str());
     if (!o.stats_file.empty()) {
         const std::string tmp = o.stats_file + ".tmp";
@@ -173,7 +240,7 @@ int run(int argc, char** argv) {
         std::fprintf(stderr, "balance: %d overlap points\n", balance->samples());
     }
     EncoderConfig ec = o.enc;
-    ec.size = lut.size;
+    ec.width = ec.height = lut.size;
 
     // Table order; cameras not given on the command line stay null (missing)
     std::vector<std::unique_ptr<CameraSource>> cams(lut.cams.size());
@@ -182,10 +249,36 @@ int run(int argc, char** argv) {
         if (c < 0) throw std::runtime_error("camera " + name + " is not in " + o.lut);
         cams[c] = std::make_unique<CameraSource>(name, dev, o.capture);
     }
-    FramePool pool(lut.size, 4);
+    FramePool pool(lut.size, lut.size, 4);
     Encoder enc(ec);
     std::unique_ptr<Snapshot> snap;
-    if (!o.snapshot.empty()) snap = std::make_unique<Snapshot>(o.snapshot, lut.size);
+    if (!o.snapshot.empty()) snap = std::make_unique<Snapshot>(o.snapshot, lut.size, lut.size);
+
+    // Full-detail stills: the same cameras through a bigger table, on request only
+    std::unique_ptr<GpuStitcher> full;
+    std::unique_ptr<FramePool> full_pool;
+    std::unique_ptr<Snapshot> full_snap;
+    if (!o.full_lut.empty() && !o.full_snapshot.empty()) {
+        const GridLut fl = GridLut::load(o.full_lut);
+        for (size_t c = 0; c < lut.cams.size(); ++c)
+            if (fl.camera_index(lut.cams[c].name) != static_cast<int>(c))
+                throw std::runtime_error(o.full_lut + " doesn't list the cameras like " + o.lut);
+        full = std::make_unique<GpuStitcher>(fl);
+        full_pool = std::make_unique<FramePool>(fl.size, fl.size, 1);
+        full_snap = std::make_unique<Snapshot>(o.full_snapshot, fl.size, fl.size);
+        std::fprintf(stderr, "full-detail stills: %dx%d\n", fl.size, fl.size);
+    }
+
+    // Zoom stream: started when the page asks, stopped a while after it stops asking
+    std::unique_ptr<Encoder> zoom_enc;
+    std::unique_ptr<FramePool> zoom_pool;
+    View zoom_view{o.zoom_w, o.zoom_h, 0.f, 0.f, 1.f};
+    Clock::time_point zoom_last{};
+    time_t zoom_mtime = 0;
+
+    // Ground mask
+    time_t horizon_mtime = -1;
+    bool horizon_on = false;
     cudaStream_t stream;
     cuda_check(cudaStreamCreate(&stream), "cudaStreamCreate");
 
@@ -196,6 +289,7 @@ int run(int argc, char** argv) {
     auto next_tick = Clock::now();
     auto next_report = next_tick + std::chrono::seconds(2);
     auto next_balance = next_tick;
+    auto next_files = next_tick;
     Stats st;
     std::vector<PlanarImage> inputs(lut.cams.size());
     long produced = 0;
@@ -206,6 +300,55 @@ int run(int argc, char** argv) {
             if (c) c->poll(now);
         enc.poll(now);
 
+        if (now >= next_files) {
+            next_files = now + std::chrono::milliseconds(250);
+            if (!o.horizon.empty()) {
+                const time_t m = mtime(o.horizon);
+                if (m != horizon_mtime) {
+                    horizon_mtime = m;
+                    const std::vector<float> h = m ? read_horizon(o.horizon) : std::vector<float>{};
+                    stitcher.set_horizon(h);
+                    if (full) full->set_horizon(h);
+                    if (horizon_on != !h.empty())
+                        std::fprintf(stderr, "ground mask %s\n", h.empty() ? "off" : "on");
+                    horizon_on = !h.empty();
+                }
+            }
+            if (!o.raw_dir.empty() && mtime(o.raw_dir + "/request")) {
+                std::remove((o.raw_dir + "/request").c_str());
+                for (auto& c : cams)
+                    if (c) c->request_raw(o.raw_dir + "/" + c->name() + ".jpg");
+            }
+            if (!o.zoom_file.empty()) {
+                const time_t m = mtime(o.zoom_file);
+                float r[4];
+                if (m && std::time(nullptr) - m <= kZoomFreshS) {
+                    if (m != zoom_mtime && read_zoom(o.zoom_file, r)) {
+                        zoom_view.x0 = r[0] * lut.size;
+                        zoom_view.y0 = r[1] * lut.size;
+                        zoom_view.scale = (r[2] - r[0]) * lut.size / o.zoom_w;
+                    }
+                    zoom_mtime = m;
+                    zoom_last = now;
+                    if (!zoom_enc) {
+                        EncoderConfig zc;
+                        zc.width = o.zoom_w;
+                        zc.height = o.zoom_h;
+                        zc.fps = ec.fps;
+                        zc.bitrate_kbps = o.zoom_bitrate;
+                        zc.sink = o.zoom_sink;
+                        zc.encode = ec.encode;
+                        zoom_enc = std::make_unique<Encoder>(zc);
+                        if (!zoom_pool) zoom_pool = std::make_unique<FramePool>(o.zoom_w, o.zoom_h, 3);
+                    }
+                } else if (zoom_enc && now - zoom_last > kZoomLinger) {
+                    zoom_enc.reset();
+                    std::fprintf(stderr, "[zoom] stopped\n");
+                }
+            }
+        }
+        if (zoom_enc) zoom_enc->poll(now);
+
         bool any = false;
         for (size_t c = 0; c < cams.size(); ++c) {
             inputs[c] = (cams[c] && cams[c]->has_frame()) ? cams[c]->image() : PlanarImage{};
@@ -214,7 +357,10 @@ int run(int argc, char** argv) {
         if (any) {
             if (balance && now >= next_balance) {
                 // Once a second, a quarter of the way: a few seconds to settle, no flicker
-                if (balance->update(inputs.data(), stream, 0.25f)) stitcher.set_corrections(balance->corrections());
+                if (balance->update(inputs.data(), stream, 0.25f)) {
+                    stitcher.set_corrections(balance->corrections());
+                    if (full) full->set_corrections(balance->corrections());
+                }
                 next_balance = now + std::chrono::seconds(1);
             }
             if (FramePool::Frame* f = pool.acquire()) {
@@ -225,16 +371,33 @@ int run(int argc, char** argv) {
                 st.stitch_ms += ms;
                 st.stitch_ms_max = std::max(st.stitch_ms_max, ms);
                 if (snap && snap->requested()) snap->take(f->host, f->bytes);
+                if (full_snap && full_snap->requested()) {
+                    // Rare and slow (~40 ms): only when someone asks
+                    FramePool::Frame* ff = full_pool->acquire();
+                    full->run(inputs.data(), ff->dev, stream);
+                    cuda_check(cudaStreamSynchronize(stream), "full-detail stitch");
+                    full_snap->take(ff->host, ff->bytes);
+                    FramePool::release(ff);
+                }
                 if (!enc.push(f)) ++st.push_failed;
                 ++st.out_frames;
                 if (o.max_frames && ++produced >= o.max_frames) break;
             } else {
                 ++st.skipped;   // the encoder is behind: all output frames still in use
             }
+            if (zoom_enc) {
+                if (FramePool::Frame* zf = zoom_pool->acquire()) {
+                    stitcher.run_view(inputs.data(), zf->dev, zoom_view, stream);
+                    cuda_check(cudaStreamSynchronize(stream), "zoom stitch");
+                    zoom_enc->push(zf);
+                }
+            }
         }
 
         if (now >= next_report) {
-            report(o, cams, enc, balance.get(), st, now);
+            const std::string extra = std::string(",\"zoom\":") + (zoom_enc ? "true" : "false") +
+                                      ",\"ground_mask\":" + (horizon_on ? "true" : "false");
+            report(o, cams, enc, balance.get(), extra, st, now);
             next_report = now + std::chrono::seconds(2);
         }
 

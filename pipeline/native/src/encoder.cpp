@@ -9,8 +9,8 @@ namespace {
 constexpr auto kBackoff = std::chrono::seconds(2);
 }
 
-FramePool::FramePool(int size, int count) : frames_(count) {
-    const size_t ysz = size_t(size) * size, csz = ysz / 4;
+FramePool::FramePool(int width, int height, int count) : frames_(count) {
+    const size_t ysz = size_t(width) * height, csz = ysz / 4;
     for (Frame& f : frames_) {
         f.bytes = ysz + 2 * csz;
         void* host = nullptr;
@@ -51,7 +51,7 @@ void Encoder::start(Clock::time_point now) {
                   "caps=video/x-raw,format=I420,width=%d,height=%d,framerate=%d/1,colorimetry=1:4:5:1 "
                   "! x264enc speed-preset=ultrafast tune=zerolatency bitrate=%d threads=0 key-int-max=%d "
                   "! h264parse config-interval=-1 ! %s",
-                  cfg_.size, cfg_.size, cfg_.fps, cfg_.bitrate_kbps, cfg_.fps * 2, cfg_.sink.c_str());
+                  cfg_.width, cfg_.height, cfg_.fps, cfg_.bitrate_kbps, cfg_.fps * 2, cfg_.sink.c_str());
     GError* err = nullptr;
     pipeline_ = gst_parse_launch(desc, &err);
     if (!pipeline_) {
@@ -69,7 +69,7 @@ void Encoder::start(Clock::time_point now) {
         return;
     }
     state_ = State::Running;
-    std::fprintf(stderr, "[encoder] started: %dx%d @ %d fps, %d kbps\n", cfg_.size, cfg_.size, cfg_.fps,
+    std::fprintf(stderr, "[encoder] started: %dx%d @ %d fps, %d kbps\n", cfg_.width, cfg_.height, cfg_.fps,
                  cfg_.bitrate_kbps);
 }
 

@@ -2,7 +2,7 @@
 // Used by pipeline/tests/test_native_stitch.py to check the kernel against
 // the NumPy twin, and to time the kernel on its own.
 //
-//   skydome-stitch-files --lut var/stitch_4096.lut --out dome.i420 \
+//   skydome-stitch-files --lut var/stitch_5120.lut --out dome.i420 \
 //       --input zenith=zenith.yuv:3840x2160:y42b --input north=... [--repeat 50] [--balance]
 //
 // --balance matches brightness and colour between the cameras first

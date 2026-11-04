@@ -42,22 +42,37 @@ std::string pipeline_desc(const std::string& device, const CaptureFormat& f) {
     return buf;
 }
 
+}  // namespace
+
 // Drops damaged MJPEG frames before the decoder: decoded, they show up as
 // streaks (F-010). The dome keeps the camera's last good frame meanwhile.
-GstPadProbeReturn check_frame(GstPad*, GstPadProbeInfo* info, gpointer user) {
+// A good frame is also where a raw download is saved from (request_raw).
+GstPadProbeReturn CameraSource::check_frame(GstPad*, GstPadProbeInfo* info, gpointer self) {
+    auto* cam = static_cast<CameraSource*>(self);
     GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
     if (!buf) return GST_PAD_PROBE_OK;
     GstMapInfo m;
     if (!gst_buffer_map(buf, &m, GST_MAP_READ)) return GST_PAD_PROBE_OK;
     const JpegCheck c = GST_BUFFER_FLAG_IS_SET(buf, GST_BUFFER_FLAG_CORRUPTED) ? JpegCheck::NoEnd
                                                                                : check_jpeg(m.data, m.size);
+    if (c == JpegCheck::Ok && cam->raw_wanted_.exchange(false)) {
+        const std::string tmp = cam->raw_path_ + ".tmp";
+        if (FILE* f = std::fopen(tmp.c_str(), "wb")) {
+            const bool ok = std::fwrite(m.data, 1, m.size, f) == m.size;
+            if (std::fclose(f) == 0 && ok) std::rename(tmp.c_str(), cam->raw_path_.c_str());
+        }
+    }
     gst_buffer_unmap(buf, &m);
     if (c == JpegCheck::Ok) return GST_PAD_PROBE_OK;
-    static_cast<std::atomic<uint64_t>*>(user)->fetch_add(1);
+    cam->dropped_.fetch_add(1);
     return GST_PAD_PROBE_DROP;
 }
 
-}  // namespace
+void CameraSource::request_raw(const std::string& path) {
+    if (fmt_.kind != CaptureFormat::Kind::MJPEG || raw_wanted_.load()) return;
+    raw_path_ = path;
+    raw_wanted_.store(true);
+}
 
 CameraSource::CameraSource(std::string name, std::string device, CaptureFormat fmt)
     : name_(std::move(name)), device_(std::move(device)), fmt_(fmt) {}
@@ -93,7 +108,7 @@ void CameraSource::start(Clock::time_point now) {
     if (fmt_.kind == CaptureFormat::Kind::MJPEG) {
         GstElement* src = gst_bin_get_by_name(GST_BIN(pipeline_), "src");
         GstPad* pad = gst_element_get_static_pad(src, "src");
-        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, check_frame, &dropped_, nullptr);
+        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, check_frame, this, nullptr);
         gst_object_unref(pad);
         gst_object_unref(src);
     }

@@ -14,7 +14,7 @@
 
 class Snapshot {
 public:
-    Snapshot(std::string path, int size);
+    Snapshot(std::string path, int width, int height);
     ~Snapshot();
     Snapshot(const Snapshot&) = delete;
     Snapshot& operator=(const Snapshot&) = delete;
@@ -26,7 +26,7 @@ private:
     static GstFlowReturn on_sample(GstElement* sink, gpointer self);
 
     std::string path_, request_;
-    int size_;
+    int width_, height_;
     GstElement* pipeline_ = nullptr;
     GstElement* src_ = nullptr;
 };

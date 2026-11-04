@@ -25,6 +25,9 @@ export interface LiveStats {
 
 export interface Status {
   mode: Mode;
+  zoom_path: string;
+  edge_zenith_deg: number;
+  ground_mask: { available: boolean; on: boolean };
   smooth_until: string | null;
   live: LiveStats | null;
   stream: { path: string; webrtc_port: number; ready: boolean | null; viewers: number | null };
@@ -62,6 +65,15 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(changes),
     }).then((r) => json<{ controls: Control[] }>(r)),
+  zoom: (r: { x0: number; y0: number; x1: number; y1: number }) =>
+    fetch("/api/zoom", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(r) }),
+  groundMask: () => fetch("/api/ground-mask").then((r) => json<{ on: boolean; alt: number[] | null }>(r)),
+  setGroundMask: (body: { on?: boolean; alt?: number[] }) =>
+    fetch("/api/ground-mask", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<{ on: boolean }>(r)),
   setMode: (mode: Mode) =>
     fetch("/api/mode", {
       method: "PUT",

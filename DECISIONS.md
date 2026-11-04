@@ -657,6 +657,46 @@ sun darkens itself and the zenith camera came out a lighter, bluer square.
   `test_native_stitch.py`: a camera made 40% darker and bluer is brought
   back (gain within 5% of 1/0.6, colour within 1).
 
+### D-023 · More detail: 5120² live, full-detail zoom, stills and raw (owner asked, 2026-11-03)
+Revises D-014's Detail size. The cameras see ~33 px/° (3840 px over a
+116° lens); the 4096² dome (200° across, D-018) held ~20.5 px/°, so 40% of
+their sharpness was thrown away. The Orin Nano encodes on the CPU, so the
+live dome can't simply match them (~6600², 44 MP).
+* **Live Detail is 5120² × 15 (~26 px/°).** Measured on the rig with
+  jetson_clocks: 4096² 2.3 cores, 5120² 3.4, 5632² 4.0, 6144² 4.0 (x264
+  stops scaling at 4 threads; 6144² is also past H.264's largest frame).
+  5120² leaves room for the zoom stream. Bitrate 28 Mb/s.
+* **jetson_clocks really runs now:** `--store` refuses to overwrite its
+  file and failed every start since Oct 31 (reported as "no password").
+  An existing file is kept (it holds the normal clocks). JetPack 7.2.1's
+  `--restore` stops part-way (a missing GPU file), so the clocks can stay
+  high after the dome stops: harmless.
+* **Zoom at full sharpness:** zoomed in ≥1.4× on the page, it sends the
+  rectangle in view (`PUT /api/zoom`, ~1/s); skydome-live renders just
+  that part straight from the cameras (the stitch kernel takes any
+  rectangle at any scale) to a 1600 × 1200 stream on `/dome-zoom`, and
+  the page fades it in once the view holds still. The zoom encoder starts
+  on the first request and stops 15 s after the last.
+* **Full-detail still** (`/api/full.jpg`, "Full detail" on the page):
+  6656² (~33 px/°), from a second stitch table, hardware JPEG; a few
+  seconds per still.
+* **Raw** (`/api/raw.zip`, "Raw" on the page): each camera's next frame
+  exactly as it sent it (MJPEG 3840 × 2160, saved before decoding), zipped
+  with cameras.yaml and the alignment. Every pixel there is.
+
+### D-024 · Ground mask (owner asked, 2026-11-03)
+Hide houses, trees and fences: a horizon altitude for each degree of
+azimuth; below it the stitch outputs black (the live dome, the NVR stream,
+snapshots, stills and zoom alike). `var/horizon.txt` is the mask in use,
+`var/horizon.off.txt` the same mask switched off; skydome-live rereads it
+within a second. `tools/detect_horizon.py` finds a first line from a
+daylight dome: walking down each azimuth, ground is much darker than the
+open sky above it, or (when darker than 0.8 of it) not blue and busy —
+foliage measured blueness −0.1…−0.7 and texture 21–27 against sky +0.2…+0.4
+and 2–5; a sunset glow and sunlit clouds stay sky. Sunlit treetops can
+still get through, so the page has an editor: drag on the dome to move the
+line, save, switch it on and off.
+
 ---
 
 ## Open questions (handoff §8)

@@ -18,6 +18,8 @@ Five-camera all-sky observatory on a Jetson Orin Nano Super. Start with
 | ONVIF camera for NVRs: discovery, stream, snapshot, imaging settings (D-020) | working; tested with onvif-zeep |
 | Web page (live dome, camera settings, Detail/Smooth, health) + API, one server with ONVIF (D-021) | working: http://skydome.local |
 | Brightness/colour matching between cameras in the stitch (D-022) | working: live, ~1 ms a second |
+| Detail 5120² live; full-sharpness zoom, 6656² stills and raw camera frames (D-023) | working |
+| Ground mask: hide houses and trees, auto-detected and editable on the page (D-024) | working |
 | Shared exposure control, vignetting, recording, astro, the rest of the planetarium console | not started |
 
 ## Layout
@@ -71,8 +73,12 @@ cd web && npm install && npm run build                       # after changing th
 
 http://skydome.local: the live dome (pan/zoom, snapshot, full screen), the
 camera settings for all five cameras, the Detail/Smooth switch (Smooth turns
-itself off after 30 minutes) and the rig's health; a red night theme. No
-login on the LAN. API docs at http://skydome.local/api/docs.
+itself off after 30 minutes) and the rig's health; a red night theme.
+Zoomed in, the picture sharpens to the cameras' own detail; "Full detail"
+saves a 6656² still and "Raw" the five camera frames as sent (D-023).
+"Hide the ground" masks houses and trees below a horizon line you can
+edit (D-024; start one with `tools/detect_horizon.py`). No login on the
+LAN. API docs at http://skydome.local/api/docs.
 
 ONVIF: 
 NVRs (Frigate, Blue Iris, Synology, ...) find "SkyDome" by discovery, or

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Write the GPU stitch tables for the live dome (DECISIONS.md D-016).
 
-    uv run --project pipeline tools/build_stitch_lut.py              # 4096 and 2048
-    uv run --project pipeline tools/build_stitch_lut.py --size 4096
+    uv run --project pipeline tools/build_stitch_lut.py              # 5120, 2048 and 6656
+    uv run --project pipeline tools/build_stitch_lut.py --size 5120
 
 Uses config/cameras.yaml for pointing, config/calibration/ for measured
 lenses and pointing, and the dome edge from config/modes.yaml.
@@ -59,10 +59,10 @@ def build(size: int, step: int = 8) -> Path:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--size", type=int, action="append", help="dome size in pixels (repeatable; default 4096 and 2048)")
+    ap.add_argument("--size", type=int, action="append", help="dome size in pixels (repeatable; default 5120, 2048 and 6656)")
     ap.add_argument("--step", type=int, default=8, help="grid step in output pixels (D-005)")
     args = ap.parse_args()
-    for size in args.size or [4096, 2048]:
+    for size in args.size or [5120, 2048, 6656]:
         build(size, args.step)
 
 

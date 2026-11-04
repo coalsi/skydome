@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Mode, type Status } from "./api";
 import { DomeView } from "./DomeView";
+import { GroundMask } from "./GroundMask";
 import { HealthPanel } from "./HealthPanel";
 import { SettingsPanel } from "./SettingsPanel";
 
@@ -51,6 +52,7 @@ export default function App() {
   const [night, setNight] = useNightTheme();
   const [tab, setTab] = useState<Tab>("cameras");
   const [switching, setSwitching] = useState(false);
+  const [maskEdit, setMaskEdit] = useState<number[] | null>(null);
 
   const setMode = (mode: Mode) => {
     if (!status || status.mode === mode) return;
@@ -86,13 +88,17 @@ export default function App() {
           </button>
         </header>
         <div className="aspect-square w-full lg:aspect-auto lg:min-h-0 lg:flex-1">
-          <DomeView path={path} />
+          <DomeView path={path} zoomPath={status?.zoom_path ?? "dome-zoom"} edgeDeg={status?.edge_zenith_deg ?? 100}
+            mask={maskEdit ? { alt: maskEdit, onChange: setMaskEdit } : null} />
         </div>
       </main>
 
       <aside className="flex flex-col border-line bg-panel lg:w-[380px] lg:border-l">
         <div className="border-b border-line p-4">
           <ModeSwitch mode={status?.mode} until={status?.smooth_until ?? null} busy={switching} onChange={setMode} />
+        </div>
+        <div className="border-b border-line p-4">
+          <GroundMask status={status} editing={maskEdit} onEdit={setMaskEdit} />
         </div>
         <div className="flex border-b border-line" role="tablist">
           {(["cameras", "health"] as Tab[]).map((t) => (
@@ -129,7 +135,7 @@ function ModeSwitch({ mode, until, busy, onChange }: {
 }) {
   const left = until ? Math.max(0, Math.ceil((Date.parse(until) - Date.now()) / 60000)) : null;
   const options: [Mode, string, string][] = [
-    ["detail", "Detail", "4096² · 15 fps"],
+    ["detail", "Detail", "5120² · 15 fps"],
     ["smooth", "Smooth", "2048² · 30 fps"],
   ];
   return (

@@ -24,9 +24,13 @@ hls: true
 hlsAddress: :8888
 
 paths:
-  # Detail, 4096² × 15 (D-014); the NVR's stream (D-015)
+  # Detail, 5120² × 15 (D-014, D-023); the NVR's stream (D-015)
   dome:
     source: publisher
   # Smooth, 2048² × 30, while the UI's Smooth switch is on
   dome-smooth:
+    source: publisher
+  # 1600 × 1200 of whatever the web page is zoomed into, at the cameras'
+  # full sharpness; only while someone is zoomed in (D-023)
+  dome-zoom:
     source: publisher

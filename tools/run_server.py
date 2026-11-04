@@ -14,7 +14,7 @@ NVRs find it by WS-Discovery (or add http://skydome.local/onvif/device_service
 by hand) and log in with the user in var/onvif_credentials.yaml, created with
 a random password on the first run. ONVIF offers:
 
-  * the Detail stream (rtsp://<jetson>:8554/dome, 4096² H.264 at 15 fps)
+  * the Detail stream (rtsp://<jetson>:8554/dome, 5120² H.264 at 15 fps)
   * a full-resolution JPEG snapshot (skydome-live's hardware encoder)
   * imaging settings for all five cameras together: exposure (auto/manual,
     time, gain), brightness, contrast, saturation, sharpness, backlight
@@ -41,8 +41,8 @@ sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import uvicorn  # noqa: E402
-from run_live import MODE_FILE, MODES, SNAPSHOT, STATS_FILES  # noqa: E402
-from skydome_pipeline.config import load_site  # noqa: E402
+from run_live import FULL_SNAPSHOT, HORIZON_FILE, MODE_FILE, MODES, RAW_DIR, SNAPSHOT, STATS_FILES, ZOOM_FILE  # noqa: E402
+from skydome_pipeline.config import load_modes, load_site  # noqa: E402
 from skydome_server.app import Live, create_app  # noqa: E402
 from skydome_server.camera_settings import CameraSettings  # noqa: E402
 from skydome_server.net import interfaces  # noqa: E402
@@ -111,8 +111,13 @@ def main() -> int:
     settings = CameraSettings(CAMERA_SETTINGS, log=log)
     services = Services(ident, stream, settings, users, interfaces=interfaces, log=log)
     snapshot = SnapshotSource(Path(args.snapshot))
-    app = create_app(settings, Live(MODE_FILE, STATS_FILES), System(ROOT / "var"), snapshot,
-                     onvif=OnvifEndpoint(services, UsernameTokenAuth(users), log=log), web_dir=WEB_DIST)
+    live_cfg = Live(MODE_FILE, STATS_FILES, zoom_file=Path(ZOOM_FILE), horizon_file=HORIZON_FILE,
+                    edge_deg=load_modes(ROOT / "config").dome.edge_zenith_deg, raw_dir=RAW_DIR,
+                    extra_files=(ROOT / "config" / "cameras.yaml", ROOT / "config" / "calibration" / "extrinsics.yaml"))
+    app = create_app(settings, live_cfg,
+                     System(ROOT / "var"), snapshot,
+                     onvif=OnvifEndpoint(services, UsernameTokenAuth(users), log=log), web_dir=WEB_DIST,
+                     full=SnapshotSource(Path(FULL_SNAPSHOT), timeout=10, fresh=2))
     if not (WEB_DIST / "index.html").exists():
         log(f"{WEB_DIST} not built: the page says so; the API and ONVIF work")
 

@@ -17,7 +17,8 @@
 using Clock = std::chrono::steady_clock;
 
 struct EncoderConfig {
-    int size = 4096;
+    int width = 5120;
+    int height = 5120;
     int fps = 15;
     int bitrate_kbps = 20000;
     // Everything after h264parse. Empty = no encoder at all (stitch only, for benchmarks)
@@ -28,7 +29,7 @@ struct EncoderConfig {
 // A pool of output frames the GPU writes into and x264 reads from
 class FramePool {
 public:
-    FramePool(int size, int count);
+    FramePool(int width, int height, int count);
     ~FramePool();
     FramePool(const FramePool&) = delete;
     FramePool& operator=(const FramePool&) = delete;

@@ -6,7 +6,7 @@ var/live_mode.yaml:
     mode: smooth
     since: '2026-11-03T23:59:00Z'
 
-Smooth (2048² × 30) reverts to Detail (4096² × 15) after SMOOTH_MINUTES
+Smooth (2048² × 30) reverts to Detail (5120² × 15) after SMOOTH_MINUTES
 (D-015), so the NVR's stream comes back by itself. No file means Detail.
 
 skydome-live writes its stats as JSON once a second (--stats-file); a file

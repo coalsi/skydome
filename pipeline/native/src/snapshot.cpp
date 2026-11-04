@@ -8,14 +8,14 @@
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
 
-Snapshot::Snapshot(std::string path, int size)
-    : path_(std::move(path)), request_(path_ + ".request"), size_(size) {
+Snapshot::Snapshot(std::string path, int width, int height)
+    : path_(std::move(path)), request_(path_ + ".request"), width_(width), height_(height) {
     char desc[512];
     std::snprintf(desc, sizeof desc,
                   "appsrc name=src format=time block=false max-buffers=1 leaky-type=downstream "
                   "caps=video/x-raw,format=I420,width=%d,height=%d,framerate=0/1 "
                   "! nvjpegenc quality=90 ! appsink name=sink emit-signals=true max-buffers=1 drop=true sync=false",
-                  size_, size_);
+                  width_, height_);
     GError* err = nullptr;
     pipeline_ = gst_parse_launch(desc, &err);
     if (!pipeline_) {

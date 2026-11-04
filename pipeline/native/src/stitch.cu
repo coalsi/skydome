@@ -34,9 +34,14 @@ struct Params {
     const float* gu;
     const float* gv;
     const uint8_t* mask;
+    // Ground mask: altitude of the horizon line per degree of azimuth (360),
+    // nullptr = none. Below it the output is fill, like outside the dome
+    const float* horizon;
+    float edge_deg;     // zenith angle at the dome circle (table header)
     int nodes, step, size;
-    int out_div;        // 1 = luma, 2 = chroma (output is size/2)
-    int osz;
+    int out_div;        // 1 = luma, 2 = chroma (output is half size)
+    int ow, oh;         // output plane size
+    float x0, y0, scale;   // canvas pixel at the output's corner, canvas pixels per output (luma) pixel
     uint8_t* outa;
     uint8_t* outb;
     uint8_t fill_a, fill_b;
@@ -50,16 +55,25 @@ template <bool kTwo>
 __global__ void stitch_kernel(Params p) {
     const int ox = blockIdx.x * blockDim.x + threadIdx.x;
     const int oy = blockIdx.y * blockDim.y + threadIdx.y;
-    if (ox >= p.osz || oy >= p.osz) return;
-    const size_t o = static_cast<size_t>(oy) * p.osz + ox;
+    if (ox >= p.ow || oy >= p.oh) return;
+    const size_t o = static_cast<size_t>(oy) * p.ow + ox;
 
-    // Output pixel centre in canvas pixels
-    const float px = (ox + 0.5f) * p.out_div - 0.5f;
-    const float py = (oy + 0.5f) * p.out_div - 0.5f;
+    // Output pixel centre in canvas pixels (the whole dome: x0 = y0 = 0, scale 1)
+    const float px = p.x0 + (ox + 0.5f) * p.out_div * p.scale - 0.5f;
+    const float py = p.y0 + (oy + 0.5f) * p.out_div * p.scale - 0.5f;
     const float half = 0.5f * p.size;
     const float dx = (px + 0.5f - half) / half;
     const float dy = (py + 0.5f - half) / half;
-    if (dx * dx + dy * dy > 1.f) {
+    const float rho2 = dx * dx + dy * dy;
+    bool hide = rho2 > 1.f;
+    if (!hide && p.horizon) {
+        // Same layout as AllSkyProjection (north up, east on the left)
+        const float alt = 90.f - sqrtf(rho2) * p.edge_deg;
+        float az = atan2f(-dx, -dy) * 57.29578f;
+        if (az < 0.f) az += 360.f;
+        hide = alt < __ldg(p.horizon + min(static_cast<int>(az), 359));
+    }
+    if (hide) {
         p.outa[o] = p.fill_a;
         if (kTwo) p.outb[o] = p.fill_b;
         return;
@@ -127,7 +141,8 @@ __global__ void stitch_kernel(Params p) {
 }  // namespace
 
 GpuStitcher::GpuStitcher(const GridLut& lut)
-    : size_(lut.size), step_(lut.step), nodes_(lut.nodes), ncams_(static_cast<int>(lut.cams.size())) {
+    : size_(lut.size), step_(lut.step), nodes_(lut.nodes), ncams_(static_cast<int>(lut.cams.size())),
+      edge_deg_(lut.edge_zenith_deg) {
     if (ncams_ > kMaxCams) throw std::runtime_error("too many cameras in the stitch table");
     for (int c = 0; c < ncams_; ++c) {
         corr_[c] = CamCorrection{};
@@ -144,6 +159,16 @@ GpuStitcher::GpuStitcher(const GridLut& lut)
     cuda_check(cudaMemcpy(d_mask_, lut.mask.data(), lut.mask.size(), cudaMemcpyHostToDevice), "upload mask");
 }
 
+void GpuStitcher::set_horizon(const std::vector<float>& alt_by_az) {
+    if (alt_by_az.size() != 360) {
+        has_horizon_ = false;
+        return;
+    }
+    if (!d_horizon_) cuda_check(cudaMalloc(&d_horizon_, 360 * sizeof(float)), "cudaMalloc horizon");
+    cuda_check(cudaMemcpy(d_horizon_, alt_by_az.data(), 360 * sizeof(float), cudaMemcpyHostToDevice), "upload horizon");
+    has_horizon_ = true;
+}
+
 void GpuStitcher::set_corrections(const std::vector<CamCorrection>& corr) {
     for (int c = 0; c < ncams_ && c < static_cast<int>(corr.size()); ++c) corr_[c] = corr[c];
 }
@@ -152,9 +177,15 @@ GpuStitcher::~GpuStitcher() {
     cudaFree(d_u_);
     cudaFree(d_v_);
     cudaFree(d_mask_);
+    cudaFree(d_horizon_);
 }
 
 void GpuStitcher::run(const PlanarImage* inputs, const I420Out& out, cudaStream_t stream) const {
+    run_view(inputs, out, View{size_, size_, 0.f, 0.f, 1.f}, stream);
+}
+
+void GpuStitcher::run_view(const PlanarImage* inputs, const I420Out& out, const View& view,
+                           cudaStream_t stream) const {
     Params luma{};
     Params chroma{};
     for (Params* p : {&luma, &chroma}) {
@@ -162,9 +193,14 @@ void GpuStitcher::run(const PlanarImage* inputs, const I420Out& out, cudaStream_
         p->gu = d_u_;
         p->gv = d_v_;
         p->mask = d_mask_;
+        p->horizon = has_horizon_ ? d_horizon_ : nullptr;
+        p->edge_deg = edge_deg_;
         p->nodes = nodes_;
         p->step = step_;
         p->size = size_;
+        p->x0 = view.x0;
+        p->y0 = view.y0;
+        p->scale = view.scale;
     }
     for (int c = 0; c < ncams_; ++c) {
         for (Params* p : {&luma, &chroma}) p->gain[c] = corr_[c].gain;
@@ -183,18 +219,20 @@ void GpuStitcher::run(const PlanarImage* inputs, const I420Out& out, cudaStream_
                          feather_[c] * csx};
     }
     luma.out_div = 1;
-    luma.osz = size_;
+    luma.ow = view.width;
+    luma.oh = view.height;
     luma.outa = out.y;
     luma.fill_a = kBlackY;
     chroma.out_div = 2;
-    chroma.osz = size_ / 2;
+    chroma.ow = view.width / 2;
+    chroma.oh = view.height / 2;
     chroma.outa = out.u;
     chroma.outb = out.v;
     chroma.fill_a = chroma.fill_b = kBlackC;
 
     const dim3 block(32, 8);
-    const dim3 grid_l((luma.osz + block.x - 1) / block.x, (luma.osz + block.y - 1) / block.y);
-    const dim3 grid_c((chroma.osz + block.x - 1) / block.x, (chroma.osz + block.y - 1) / block.y);
+    const dim3 grid_l((luma.ow + block.x - 1) / block.x, (luma.oh + block.y - 1) / block.y);
+    const dim3 grid_c((chroma.ow + block.x - 1) / block.x, (chroma.oh + block.y - 1) / block.y);
     stitch_kernel<false><<<grid_l, block, 0, stream>>>(luma);
     stitch_kernel<true><<<grid_c, block, 0, stream>>>(chroma);
     cuda_check(cudaGetLastError(), "stitch kernel launch");

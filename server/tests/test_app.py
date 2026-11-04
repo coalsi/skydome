@@ -180,3 +180,83 @@ def test_only_picture_controls_and_a_refusal_doesnt_block_the_rest(tmp_path):
     assert sum("refused contrast" in m for m in logs) == 1
     s.sync()                                                               # already applied: not retried
     assert sum("refused contrast" in m for m in logs) == 1
+
+
+def test_zoom_requests_and_ground_mask_switch(tmp_path):
+    cams = [CameraNode("/dev/video0", ("video0", "2-1.1", "3"))]
+    settings = CameraSettings(tmp_path / "s.yaml", finder=lambda: list(cams), opener=FakeDevice, log=lambda *a, **k: None)
+    hf = tmp_path / "horizon.txt"
+    lv = Live(tmp_path / "mode.yaml", [], paths=lambda: {}, zoom_file=tmp_path / "zoom.txt", horizon_file=hf)
+    full = SnapshotSource(tmp_path / "full.jpg", timeout=0.2)
+    client = TestClient(create_app(settings, lv, System(tmp_path), SnapshotSource(tmp_path / "s.jpg"), full=full))
+
+    r = client.put("/api/zoom", json={"x0": 0.25, "y0": 0.3, "x1": 0.45, "y1": 0.45})
+    assert r.status_code == 200 and r.json() == {"path": "dome-zoom"}
+    assert (tmp_path / "zoom.txt").read_text().split() == ["0.250000", "0.300000", "0.450000", "0.450000"]
+    assert client.put("/api/zoom", json={"x0": 0.5, "y0": 0.3, "x1": 0.4, "y1": 0.45}).status_code == 400
+
+    assert client.get("/api/status").json()["ground_mask"] == {"available": False, "on": False}
+    assert client.put("/api/ground-mask", json={"on": True}).status_code == 404     # nothing detected yet
+    (tmp_path / "horizon.off.txt").write_text("5\n" * 360)
+    assert client.put("/api/ground-mask", json={"on": True}).json() == {"on": True}
+    assert hf.exists() and client.get("/api/status").json()["ground_mask"] == {"available": True, "on": True}
+    assert client.put("/api/ground-mask", json={"on": False}).json() == {"on": False}
+    assert not hf.exists() and (tmp_path / "horizon.off.txt").exists()
+
+    assert client.get("/api/full.jpg").status_code == 503                             # skydome-live not answering
+    (tmp_path / "full.jpg").write_bytes(b"\xff\xd8 full \xff\xd9")
+    assert client.get("/api/full.jpg").content.startswith(b"\xff\xd8")
+
+
+def test_ground_mask_edit_round_trip(tmp_path):
+    cams = [CameraNode("/dev/video0", ("video0", "2-1.1", "3"))]
+    settings = CameraSettings(tmp_path / "s.yaml", finder=lambda: list(cams), opener=FakeDevice, log=lambda *a, **k: None)
+    hf = tmp_path / "horizon.txt"
+    lv = Live(tmp_path / "mode.yaml", [], paths=lambda: {}, horizon_file=hf, edge_deg=100)
+    client = TestClient(create_app(settings, lv, System(tmp_path), SnapshotSource(tmp_path / "s.jpg")))
+    assert client.get("/api/ground-mask").json() == {"on": False, "alt": None}
+    assert client.get("/api/status").json()["edge_zenith_deg"] == 100
+    alt = [5.0] * 360
+    alt[180] = 12.5
+    assert client.put("/api/ground-mask", json={"alt": alt}).json() == {"on": False}   # drawn, not yet on
+    assert (tmp_path / "horizon.off.txt").exists() and not hf.exists()
+    assert client.put("/api/ground-mask", json={"alt": alt, "on": True}).json() == {"on": True}
+    got = client.get("/api/ground-mask").json()
+    assert got["on"] and got["alt"][180] == 12.5 and not (tmp_path / "horizon.off.txt").exists()
+    assert client.put("/api/ground-mask", json={"alt": [5.0] * 10}).status_code == 400
+
+
+def test_raw_download_zips_each_cameras_frame(tmp_path):
+    import io
+    import threading
+    import zipfile
+
+    cams = [CameraNode("/dev/video0", ("video0", "2-1.1", "3"))]
+    settings = CameraSettings(tmp_path / "s.yaml", finder=lambda: list(cams), opener=FakeDevice, log=lambda *a, **k: None)
+    stats = tmp_path / "live.json"
+    stats.write_text(json.dumps({"cameras": {"north": {"state": "live"}, "east": {"state": "live"},
+                                             "west": {"state": "waiting"}}}))
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (tmp_path / "cameras.yaml").write_text("cameras: []\n")
+    lv = Live(tmp_path / "mode.yaml", [stats], paths=lambda: {}, raw_dir=raw, extra_files=(tmp_path / "cameras.yaml",))
+    client = TestClient(create_app(settings, lv, System(tmp_path), SnapshotSource(tmp_path / "s.jpg")))
+    stop = threading.Event()
+
+    def fake_live():   # skydome-live's side: each live camera saves its next frame
+        while not stop.is_set():
+            if (raw / "request").exists():
+                (raw / "request").unlink()
+                for n in ("north", "east"):
+                    (raw / f"{n}.jpg").write_bytes(b"\xff\xd8 " + n.encode() + b" \xff\xd9")
+            time.sleep(0.01)
+
+    threading.Thread(target=fake_live, daemon=True).start()
+    try:
+        r = client.get("/api/raw.zip")
+    finally:
+        stop.set()
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    assert set(z.namelist()) == {"north.jpg", "east.jpg", "cameras.yaml", "README.txt"}
+    assert z.read("north.jpg").startswith(b"\xff\xd8")
