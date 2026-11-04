@@ -278,7 +278,8 @@ def test_night_and_day_presets(tmp_path):
     assert client.get("/api/stretch").json() == {"black": 0.0, "k": 0.0}
 
     r = client.post("/api/preset/night").json()
-    assert r["stretch"] == {"black": 34.0, "k": 45.0} and sf.read_text().split() == ["34", "45"]
+    assert r["stretch"] == {"black": 27.0, "k": 45.0} and sf.read_text().split() == ["27", "45"]
+    assert settings.values["contrast"] == 73 and settings.values["sharpness"] == 230
     assert settings.values["exposure_dynamic_framerate"] == 1 and settings.values["exposure_time_absolute"] == 10000
     # Long exposure reaches the camera: manual mode first, then the time it allows
     names = [n for _, n, _ in FakeDevice.log]

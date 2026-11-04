@@ -44,14 +44,19 @@ ZOOM_PATH = "dome-zoom"   # what the page is zoomed into, at the cameras' sharpn
 # The cameras' own contrast/gamma/brightness can't do the stretch: on the rig
 # they moved stars by 2-3 levels at most, and contrast > 65 crushed the sky to 0.
 PRESETS = {
+    # Brightness 154 / contrast 73 / sharpness 230: A/B-tested on the rig 2026-11-03 against
+    # 132 / 65 / 128, interleaved on the same sky: +24% stars, brightest ~10-15% stronger.
+    # Contrast 80 crushes the night sky to 0-1 and loses the faint ones: stay below ~75
     "night": {"camera": {"auto_exposure": 1, "exposure_dynamic_framerate": 1, "exposure_time_absolute": 10000,
-                         "gain": 190, "backlight_compensation": 0, "saturation": 60},
-              # Tuned on the rig 2026-11-03: with the stack's lower noise, k 45 shows the most
-              # clear (6σ) stars; k 60 only lifts the background
-              "stretch": {"black": 34, "k": 45},
+                         "gain": 190, "backlight_compensation": 0, "saturation": 60,
+                         "brightness": 154, "contrast": 73, "sharpness": 230},
+              # Stretch black just under the sky background those give (29); k 45 shows
+              # the most clear (6σ) stars with the stack, k 60 only lifts the background
+              "stretch": {"black": 27, "k": 45},
               "stack": 16},                          # 16 s of light; stars drift ~2 px in that (D-026)
     "day": {"camera": {"auto_exposure": 3, "exposure_dynamic_framerate": 0, "gain": 140,
-                       "backlight_compensation": 48, "saturation": 100},
+                       "backlight_compensation": 48, "saturation": 100,
+                       "brightness": 128, "contrast": 65, "sharpness": 128},
             "stretch": {"black": 0, "k": 0}, "stack": 0},
 }
 

@@ -723,6 +723,14 @@ Measured on the rig the first dark evening (light-polluted, some cloud):
   (this one set auto exposure and backlight 160 at 18:49) undoes Night.
 * **Not yet:** stacking frames (handoff's Night/Deep modes) and switching
   presets by sun altitude (D-015 Auto).
+* **Camera picture settings, A/B-tested 2026-11-03** (north camera's raw
+  frames, each candidate interleaved with the baseline on the same sky,
+  3 frames averaged, 4σ point sources): brightness 154 + contrast 73
+  gave +24% stars over 132 + 65 (background 29, unclipped); sharpness 230
+  ~10-15% stronger peaks; gamma, saturation, backlight no gain. Contrast
+  80 crushed the background to 0-1: more "stars" by the count but the
+  faint ones lost, so always check the background isn't clipped. Night
+  preset updated; stretch black 27.
 
 ### D-026 · Live stacking (owner asked, 2026-11-03)
 Goal (owner): see the sky in detail and find objects; 10 fps, 1 fps or
