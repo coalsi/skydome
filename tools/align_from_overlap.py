@@ -158,6 +158,9 @@ def main() -> None:
     for pp, pm in zip(pixel_pairs, pairs):
         flag = "" if pm.n_inliers >= args.min_inliers else "  (too few, not used)"
         print(f"  {order[pp.i]:>6} - {order[pp.j]:<6} {len(pp.pa):5d} matches, {pm.n_inliers:5d} agree{flag}")
+    if not any(pm.n_inliers >= args.min_inliers for pm in pairs):
+        # Blank or blown-out stills: keep the alignment (and lens fit) already on disk
+        sys.exit("no pair of cameras matched; nothing written. Check the stills in calib/overlap/")
 
     if args.frame == "nominal":
         rots = frame_to_nominal(al.rotations, [nominal[n].rotation for n in order])

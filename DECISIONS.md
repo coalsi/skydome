@@ -550,9 +550,8 @@ owner's request, "with controls via ONVIF where any apply".
   driving five cameras, a snapshot from the GPU dome) would still have to
   be written. The handoff's alternative, a minimal custom SOAP service,
   is `server/skydome_server/onvif/` (stdlib + PyYAML, run with the
-  pipeline environment by `tools/run_onvif.py`, unit
-  `systemd/skydome-onvif.service`). Moves into the FastAPI server (§5.9)
-  when that exists.
+  pipeline environment). Since D-021 it is served by the FastAPI server
+  (`tools/run_server.py`, unit `systemd/skydome-server.service`).
 * **What it offers:** WS-Discovery (Probe/Resolve/Hello/Bye), Device
   (information, capabilities, services, time, scopes, network), Media
   ver10 with one fixed profile `dome` = the Detail stream
@@ -582,7 +581,7 @@ owner's request, "with controls via ONVIF where any apply".
   (`SetSystemDateAndTime` accepts NTP only).
 * **Login:** WS-Security UsernameToken (digest or text), single user in
   `var/onvif_credentials.yaml` (mode 600), created as `admin` with a random
-  password on first start; `tools/run_onvif.py --set-password` changes it.
+  password on first start; `tools/run_server.py --set-password` changes it.
   Nonces are single-use and the token's time must be within an hour.
   The RTSP stream and the snapshot URL stay open on the LAN, as before
   (handoff §5.7).
@@ -592,6 +591,39 @@ owner's request, "with controls via ONVIF where any apply".
   snapshot, and its imaging changes reach every camera (`v4l2-ctl`
   confirms); wrong passwords and out-of-range values are refused.
   `server/tests`: 25 tests (24 on the Mac).
+
+### D-021 · Web page v1: one FastAPI server for the page, its API and ONVIF (owner asked, 2026-11-03)
+The first slice of handoff §5.8/§5.9, built to its stack: FastAPI on the
+Jetson, React + TypeScript + Vite + Tailwind for the page, WebRTC (WHEP).
+* **One process on port 80** (`tools/run_server.py`,
+  `systemd/skydome-server.service`, replacing `skydome-onvif.service`):
+  the page from `web/dist`, the API under `/api` (OpenAPI at
+  `/api/docs`), ONVIF under `/onvif` (D-020's SOAP code, now behind
+  `OnvifEndpoint`). Port 80 can only have one owner, and NVRs assume it.
+* **What the page does:** the live dome, played from mediamtx over WebRTC
+  with wheel/pinch zoom, drag to pan, snapshot download and full screen;
+  the cameras' settings (one set for all five, the same store ONVIF writes,
+  so either one sees the other's changes); the Detail/Smooth switch; health
+  (output and per-camera fps, restarts, dropped frames, stitch time,
+  viewers, temperatures, CPU, memory, disk, Wi-Fi, uptime); a red
+  night-vision theme. Not yet: the sphere view, overlays, the diagnostics
+  history, auto-align, recording — later slices of §5.8.
+* **WebRTC signalling goes through the server** (`/api/webrtc/...` passed
+  on to mediamtx's WHEP): the page needs only its own address, no
+  cross-port requests. The video itself still flows straight from mediamtx.
+* **Detail/Smooth:** the page writes `var/live_mode.yaml`; `run_live.py`
+  (without `--mode`) follows it and restarts skydome-live in the new mode
+  (a few seconds of no picture; the page reconnects by itself). Smooth
+  reverts to Detail after 30 minutes (D-015).
+* **No login** for the page or the API on the LAN (handoff §5.7: basic
+  auth optional, off by default). ONVIF keeps its own login.
+* **The built page is committed** (`web/dist`, ~180 kB): the Jetson
+  deploys with `git pull` and never needs Node. Rebuild on the Mac with
+  `npm run build` after changing `web/src`.
+* **Tested 2026-11-03** on the rig outdoors: the page plays the 4096² dome,
+  Detail → Smooth → Detail switches and reconnects, health and settings
+  read live values; phone layout and the night theme checked.
+  `server/tests`: 34 tests (33 on the Mac).
 
 ---
 

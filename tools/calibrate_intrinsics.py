@@ -40,6 +40,7 @@ from skydome_pipeline.calibration import (  # noqa: E402
 from skydome_pipeline.config import load_cameras  # noqa: E402
 
 LETTER_IN = (11.0, 8.5)   # landscape
+GRAB_FRAMES = 60          # frames read before keeping one (auto-exposure settling)
 
 
 def cmd_board(args) -> None:
@@ -76,14 +77,16 @@ def _complete_jpeg(p: Path) -> bool:
 
 def grab(device: str, dest: Path, width: int, height: int) -> bool:
     """One full-res MJPEG frame, saved as-is (no decode). The first frames after
-    opening can be mid auto-exposure, so take a few and keep the last complete one."""
+    opening can be mid auto-exposure, so take a couple of seconds' worth and keep
+    the last complete one (going from indoors to daylight the exposure takes
+    ~25 frames to settle; measured 2026-11-03)."""
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = ["gst-launch-1.0", "-q", "v4l2src", f"device={device}", "num-buffers=8", "!",
+        cmd = ["gst-launch-1.0", "-q", "v4l2src", f"device={device}", f"num-buffers={GRAB_FRAMES}", "!",
                f"image/jpeg,width={width},height={height}", "!", "multifilesink", f"location={tmp}/f%02d.jpg"]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         frames = [f for f in sorted(Path(tmp).glob("f*.jpg")) if _complete_jpeg(f)]
         if r.returncode != 0 or not frames:
-            sys.stderr.write(r.stderr[-500:] or f"{device}: no complete frame in 8\n")
+            sys.stderr.write(r.stderr[-500:] or f"{device}: no complete frame in {GRAB_FRAMES}\n")
             return False
         shutil.copy(frames[-1], dest)
         return True

@@ -1,7 +1,8 @@
 """Camera controls shared by every camera in the rig.
 
 All five cameras get the same values (D-015: one exposure target for the
-whole dome, so the seams stay even). Values someone has set are kept in
+whole dome, so the seams stay even). The web page and ONVIF both change
+them, through the same object. Values someone has set are kept in
 var/camera_settings.yaml (V4L2 control names, the cameras' own units) and
 re-applied whenever a camera appears, since a replugged UVC camera wakes up
 with its firmware defaults. Controls nobody has set stay at those defaults.
@@ -141,7 +142,7 @@ class CameraSettings:
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text("# Camera controls set through ONVIF (or by hand), applied to all cameras.\n"
+        tmp.write_text("# Camera controls set from the web page or ONVIF (or by hand), applied to all cameras.\n"
                        "# V4L2 names and units; see server/skydome_server/camera_settings.py.\n"
                        + yaml.safe_dump(dict(sorted(self.values.items()))))
         tmp.replace(self.path)

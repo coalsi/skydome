@@ -16,7 +16,7 @@ import pytest
 from skydome_server.camera_settings import FALLBACK_CONTROLS, CameraSettings
 from skydome_server.net import Interface, parse_ip_json
 from skydome_server.onvif.discovery import Discovery
-from skydome_server.onvif.http import OnvifServer, SnapshotSource, load_credentials
+from skydome_server.onvif.http import OnvifEndpoint, SnapshotSource, load_credentials
 from skydome_server.onvif.services import Identity, Request, Services, Stream, _posix_tz
 from skydome_server.onvif.soap import NS, Fault, UsernameTokenAuth, envelope, fault_envelope, parse
 from skydome_server.v4l2 import CameraNode, control_name, find_cameras
@@ -342,10 +342,14 @@ def test_probe_mismatch(disc):
 # ---- HTTP end to end -------------------------------------------------------------
 
 def test_http_endpoint(services, tmp_path):
+    from fastapi.testclient import TestClient
+    from skydome_server.app import Live, create_app
+    from skydome_server.system import System
+
     snap = tmp_path / "snapshot.jpg"
-    server = OnvifServer(("127.0.0.1", 0), services, UsernameTokenAuth({USER: PASSWORD}), SnapshotSource(snap, timeout=2))
-    port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    onvif = OnvifEndpoint(services, UsernameTokenAuth({USER: PASSWORD}), log=lambda *a, **k: None)
+    app = create_app(services.settings, Live(tmp_path / "mode.yaml", [], paths=lambda: {}), System(tmp_path),
+                     SnapshotSource(snap, timeout=2), onvif=onvif)
     stop = threading.Event()
 
     def fake_live():   # skydome-live's side of the snapshot handshake
@@ -358,27 +362,23 @@ def test_http_endpoint(services, tmp_path):
 
     threading.Thread(target=fake_live, daemon=True).start()
     try:
+        client = TestClient(app)
+
         def post(body, tok=""):
-            r = urllib.request.Request(f"http://127.0.0.1:{port}/onvif/device_service", data=request(body, tok),
-                                       headers={"Content-Type": "application/soap+xml"})
-            try:
-                with urllib.request.urlopen(r, timeout=5) as resp:
-                    return resp.status, resp.read()
-            except urllib.error.HTTPError as e:
-                return e.code, e.read()
+            r = client.post("/onvif/device_service", content=request(body, tok),
+                            headers={"Content-Type": "application/soap+xml"})
+            return r.status_code, r.content
 
         status, _ = post("<tds:GetDeviceInformation/>")
         assert status == 400                                       # no credentials
         status, body = post("<tds:GetDeviceInformation/>", token())
         assert status == 200 and b"abc123" in body
         status, body = post("<tds:GetCapabilities/>")
-        assert status == 200 and f"127.0.0.1:{port}/onvif/media_service".encode() in body
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/onvif/snapshot.jpg", timeout=5) as resp:
-            assert resp.headers["Content-Type"] == "image/jpeg" and resp.read().startswith(b"\xff\xd8")
+        assert status == 200 and b"testserver:80/onvif/media_service" in body   # the address the client used
+        r = client.get("/onvif/snapshot.jpg")
+        assert r.headers["content-type"] == "image/jpeg" and r.content.startswith(b"\xff\xd8")
     finally:
         stop.set()
-        server.shutdown()
-        server.server_close()
 
 
 def test_snapshot_without_skydome_live(tmp_path):

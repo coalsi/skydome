@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
-"""ONVIF Profile S camera for the dome (handoff §5.7, DECISIONS.md D-020).
+"""The SkyDome server on port 80 (DECISIONS.md D-020, D-021): the web page,
+its API, and ONVIF for NVRs, in one process.
 
-    uv run --project pipeline tools/run_onvif.py              # port 80 needs the systemd unit
-    uv run --project pipeline tools/run_onvif.py --port 8080  # by hand
-    uv run --project pipeline tools/run_onvif.py --set-password
+    uv run --project pipeline tools/run_server.py              # port 80 needs the systemd unit
+    uv run --project pipeline tools/run_server.py --port 8080  # by hand
+    uv run --project pipeline tools/run_server.py --set-password
+
+http://skydome.local shows the live dome with its camera settings, the
+Detail/Smooth switch and the rig's health (web/, built into web/dist). API
+docs at http://skydome.local/api/docs.
 
 NVRs find it by WS-Discovery (or add http://skydome.local/onvif/device_service
 by hand) and log in with the user in var/onvif_credentials.yaml, created with
-a random password on the first run. It offers:
+a random password on the first run. ONVIF offers:
 
   * the Detail stream (rtsp://<jetson>:8554/dome, 4096² H.264 at 15 fps)
   * a full-resolution JPEG snapshot (skydome-live's hardware encoder)
   * imaging settings for all five cameras together: exposure (auto/manual,
     time, gain), brightness, contrast, saturation, sharpness, backlight
-    compensation and white balance (auto/manual), kept in
-    var/camera_settings.yaml and re-applied when a camera is replugged
+    compensation and white balance (auto/manual)
+
+Camera settings from the page and from ONVIF are the same settings, kept in
+var/camera_settings.yaml and re-applied when a camera is replugged.
 """
 
 from __future__ import annotations
 
 import argparse
 import getpass
-import signal
 import socket
 import subprocess
 import sys
@@ -34,17 +40,21 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from run_live import MODES, SNAPSHOT  # noqa: E402
+import uvicorn  # noqa: E402
+from run_live import MODE_FILE, MODES, SNAPSHOT, STATS_FILES  # noqa: E402
 from skydome_pipeline.config import load_site  # noqa: E402
+from skydome_server.app import Live, create_app  # noqa: E402
 from skydome_server.camera_settings import CameraSettings  # noqa: E402
 from skydome_server.net import interfaces  # noqa: E402
 from skydome_server.onvif.discovery import Discovery  # noqa: E402
-from skydome_server.onvif.http import OnvifServer, SnapshotSource, load_credentials, save_credentials  # noqa: E402
+from skydome_server.onvif.http import OnvifEndpoint, SnapshotSource, load_credentials, save_credentials  # noqa: E402
 from skydome_server.onvif.services import Identity, Services, Stream  # noqa: E402
 from skydome_server.onvif.soap import UsernameTokenAuth  # noqa: E402
+from skydome_server.system import System  # noqa: E402
 
 CREDENTIALS = ROOT / "var" / "onvif_credentials.yaml"
 CAMERA_SETTINGS = ROOT / "var" / "camera_settings.yaml"
+WEB_DIST = ROOT / "web" / "dist"
 
 
 def log(*args, **kw) -> None:
@@ -80,7 +90,7 @@ def set_password() -> int:
         log("passwords empty or different; nothing changed")
         return 1
     save_credentials(CREDENTIALS, user, pw)
-    log(f"saved to {CREDENTIALS}; restart the service: sudo systemctl restart skydome-onvif")
+    log(f"saved to {CREDENTIALS}; restart the service: sudo systemctl restart skydome-server")
     return 0
 
 
@@ -100,32 +110,37 @@ def main() -> int:
     users = load_credentials(CREDENTIALS)
     settings = CameraSettings(CAMERA_SETTINGS, log=log)
     services = Services(ident, stream, settings, users, interfaces=interfaces, log=log)
-    try:
-        server = OnvifServer(("", args.port), services, UsernameTokenAuth(users), SnapshotSource(Path(args.snapshot)))
-    except PermissionError:
-        log(f"can't listen on port {args.port}: below 1024 needs systemd/skydome-onvif.service "
-            "(CAP_NET_BIND_SERVICE); by hand use --port 8080")
-        return 1
+    snapshot = SnapshotSource(Path(args.snapshot))
+    app = create_app(settings, Live(MODE_FILE, STATS_FILES), System(ROOT / "var"), snapshot,
+                     onvif=OnvifEndpoint(services, UsernameTokenAuth(users), log=log), web_dir=WEB_DIST)
+    if not (WEB_DIST / "index.html").exists():
+        log(f"{WEB_DIST} not built: the page says so; the API and ONVIF work")
 
     stop = threading.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda s, f: stop.set())
-    threads = [threading.Thread(target=settings.watch, args=(stop,), daemon=True),
-               threading.Thread(target=server.serve_forever, daemon=True)]
+    threads = [threading.Thread(target=settings.watch, args=(stop,), daemon=True)]
     if not args.no_discovery:
         port = args.port
         disc = Discovery(ident.uuid, ident.scopes(), lambda ip: f"http://{ip}:{port}/onvif/device_service", log=log)
         threads.append(threading.Thread(target=disc.serve, args=(stop,), daemon=True))
     for t in threads:
         t.start()
-    log(f"onvif: {ident.name} on port {args.port} ({', '.join(i.address for i in interfaces()) or 'no network'}), "
+    log(f"skydome server: {ident.name} on port {args.port} ({', '.join(i.address for i in interfaces()) or 'no network'}), "
         f"stream rtsp://*:{stream.rtsp_port}/{stream.path}, firmware {ident.firmware}")
-    stop.wait()
-    server.shutdown()
-    for t in threads[2:]:
-        t.join(timeout=3)   # discovery says Bye
+    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=args.port, log_level="warning",
+                                           access_log=False))   # NVRs poll constantly; errors only
+    try:
+        server.run()   # until SIGINT / SIGTERM
+    except SystemExit:
+        pass           # uvicorn exits this way when it can't bind
+    finally:
+        stop.set()
+        for t in threads[1:]:
+            t.join(timeout=3)   # discovery says Bye
+    if not server.started:
+        log(f"can't listen on port {args.port}: below 1024 needs systemd/skydome-server.service "
+            "(CAP_NET_BIND_SERVICE); by hand use --port 8080")
+        return 1
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

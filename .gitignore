@@ -5,6 +5,9 @@ __pycache__/
 reports/
 node_modules/
 dist/
+# The built web page ships in the repo: the Jetson deploys with a git pull, no Node (D-021)
+!web/dist/
+*.tsbuildinfo
 calib/
 var/
 pipeline/native/build/

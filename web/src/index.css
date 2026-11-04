@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* Colours are tokens so the red night-vision theme (handoff §5.8) is one swap */
+:root {
+  --bg: #0b0d12;
+  --panel: #12161e;
+  --raised: #1a1f2a;
+  --line: #262d3b;
+  --fg: #e8ecf4;
+  --muted: #8b95a8;
+  --accent: #7aa2ff;
+  --good: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --video-filter: none;
+  color-scheme: dark;
+}
+
+:root[data-theme="night"] {
+  --bg: #0a0000;
+  --panel: #140202;
+  --raised: #1e0404;
+  --line: #3a0a0a;
+  --fg: #ff4d4d;
+  --muted: #a83232;
+  --accent: #ff3b3b;
+  --good: #ff4d4d;
+  --warn: #ff4d4d;
+  --bad: #ff8080;
+  /* Keep the picture's detail, lose its colour: dark-adapted eyes stay adapted */
+  --video-filter: grayscale(1) brightness(0.45) sepia(1) hue-rotate(-35deg) saturate(5);
+}
+
+@theme {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Range inputs in the theme's colours */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--panel);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--panel);
+}
+input[type="range"]:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
