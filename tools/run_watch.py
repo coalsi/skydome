@@ -17,6 +17,7 @@ var/watch.yaml (this install's own, not in git):
     adsb_url: http://<receiver>/tar1090/data/aircraft.json
     alert_url: https://ntfy.sh/<your-topic>   # optional: a POST per unknown object
     alert_kinds: [unknown]                     # which kinds alert (default unknown)
+    alert_priority: high                       # ntfy priority (default high: a banner, not just a list entry)
     page_url: http://skydome.local             # for the alert's link
     keep_days: 30                              # pictures of unlabelled, identified objects
 """
@@ -87,7 +88,9 @@ def alert(cfg: dict, oid: int, rec: dict) -> bool:
     body = (f"{rec['kind'].capitalize()} object at {when}: {len(p)} frame(s), from {p[0][2]:.0f}° up at "
             f"{p[0][1]:.0f}° to {p[-1][2]:.0f}° up at {p[-1][1]:.0f}°, "
             f"{rec['features']['speed_dps']:.2f}°/s").encode()
-    headers = {"Title": f"SkyDome: {rec['kind']} object", "Tags": "flying_saucer"}
+    # High priority: ntfy at the default only lists it in the app, without a banner (tested 2026-11-04)
+    headers = {"Title": f"SkyDome: {rec['kind']} object", "Tags": "flying_saucer",
+               "Priority": str(cfg.get("alert_priority", "high"))}
     if cfg.get("page_url"):
         headers["Click"] = f"{cfg['page_url'].rstrip('/')}/#objects/{oid}"
     try:
