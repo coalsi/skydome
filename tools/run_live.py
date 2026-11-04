@@ -39,6 +39,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +60,11 @@ ZOOM_FILE = "/tmp/skydome-zoom.txt"       # "x0 y0 x1 y1" from the web page whil
 ZOOM_SIZE = (1600, 1200)                  # the page asks for 4:3 rectangles
 HORIZON_FILE = ROOT / "var" / "horizon.txt"   # ground mask (tools/detect_horizon.py)
 RAW_DIR = Path("/tmp/skydome-raw")         # each camera's frame as sent, on request (the raw download)
+# The Jetson's USB-C port often misses a camera that's plugged in at power-on
+# (the zenith camera, 3 cold starts out of 4 on 2026-11-03); switching the
+# port out of host mode and back finds it, like replugging it
+USB_ROLE = sorted(Path("/sys/class/usb_role").glob("*-role-switch"))
+KICK_AFTER_S, KICK_EVERY_S, KICKS = 20, 120, 3
 MODE_FILE = ROOT / "var" / "live_mode.yaml"   # written by the web page (skydome_server/live.py)
 # Stats: the service's file, then the default when run by hand (the server reads the newest)
 STATS_FILES = [Path("/run/skydome/live.json"), Path("/tmp/skydome-live.json")]
@@ -118,6 +124,20 @@ def launch(mode_name: str, devices: dict[str, str], args, extra: list[str]) -> s
     return subprocess.Popen(cmd)
 
 
+def kick_usb_c() -> bool:
+    """Make the USB-C port look for its device again (needs passwordless sudo)."""
+    ok = False
+    for role in USB_ROLE:
+        if role.read_text().strip() != "host":
+            continue   # in device mode (flashing): leave it alone
+        for value in ("none", "host"):
+            ok = subprocess.run(["sudo", "-n", "tee", str(role)], input=value, capture_output=True,
+                                text=True).returncode == 0
+            if value == "none":
+                time.sleep(2)
+    return ok
+
+
 def stop(proc: subprocess.Popen) -> int:
     proc.send_signal(signal.SIGTERM)
     try:
@@ -160,7 +180,14 @@ def main() -> int:
     try:
         current = wanted()
         proc = launch(current, devices, args, extra)
+        started, kicks = time.monotonic(), 0
         while not quit_.wait(1.0):
+            missing = [n for n, d in devices.items() if not Path(d).exists()]
+            if missing and kicks < KICKS and time.monotonic() - started > KICK_AFTER_S + kicks * KICK_EVERY_S:
+                kicks += 1
+                ok = kick_usb_c()
+                print(f"  {', '.join(missing)} not found; {'re-detecting' if ok else 'could not re-detect'} "
+                      f"the USB-C port ({kicks}/{KICKS})", flush=True)
             if proc.poll() is not None:
                 return proc.returncode   # systemd restarts us
             if wanted() != current:
