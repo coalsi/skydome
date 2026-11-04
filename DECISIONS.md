@@ -814,3 +814,47 @@ averaging frames.
   uncompressed 1080p doesn't fit USB 2).
 * Still to do with all five on final cabling: the full 5× load tests,
   USB tree at 5000M for every camera, and the F-010 experiments.
+
+### D-027 · Alignment from the stars (owner asked, 2026-11-03)
+The garage and dusk alignments were off by degrees, and the zenith camera
+by a quarter turn (it had been turned with the side cameras' renaming,
+cb88ae7). `tools/align_from_stars.py` (`pipeline/skydome_pipeline/stars.py`)
+now solves every camera from the night sky, on the rig, in ~5 minutes:
+* **Catalogue:** Yale Bright Star Catalogue (BSC5, 9096 stars to V 6.5,
+  cached in `var/bsc5.dat`; SAO's copy first, CDS timed out from the rig),
+  precessed to the date, alt/az for the site, refraction added.
+* **Stars, not lights:** a frame's brightest points are mostly lit
+  windows, trees and wires near the horizon. `sky_stars` keeps points on
+  dark sky (not glare, not the bottom fifth of the frame) whose light is
+  in a small core on a quiet surround. Without it the side cameras
+  matched nothing.
+* **Blind when needed:** triangles of the 22 brightest stars are matched
+  by shape (so a lens up to ~10% off still matches) to triangles of the
+  90 brightest catalogue stars; each candidate is scored by how many
+  stars it puts on detections. Then a staged refine: catalogue stars to
+  the nearest detection, 45 px down to 4 px and V 3.5 down to 6.5,
+  fitting rotation, then lens scale, then centre and k1, dropping pairs
+  far off the fit. A camera near its configured pointing skips the blind
+  step. The zenith is solved first and its lens starts the others.
+* **Found on the rig (04:22 UTC 2026-11-04):** the lenses are ~4.3% longer
+  than the 116° default (k1 ≈ −0.062); the zenith points within 0.2° of
+  straight up; the side cameras sit at 30.4–31.0° (not 33–34°) and are
+  4–10° clockwise of the config. 41–116 stars a camera at 0.5–1.5 px rms.
+  Seams afterwards: the same star from two cameras lands within 1.7–2.9'
+  (median; ~1 dome pixel at 5120), 4.4' on zenith/north.
+* **Focus:** a star solve also reads focus. The east camera's lens (IR
+  filter removed, refitted by hand) had stars as 13 px rings, which the
+  matcher couldn't use; refocused against a half-flux-diameter readout to
+  3.7 px, in line with the factory-focused cameras (2.3–4.2 px).
+* **IR filter removed (east), measured the same night**, same exposure,
+  gain and fixed white balance, aperture photometry on catalogue stars
+  seen by two cameras: east gets **1.4–1.5× the star signal and
+  signal-to-noise** of north and of the zenith in its overlaps; the
+  untouched cameras against the zenith span 0.8–1.1×. East picked out 111
+  catalogue stars (to ~V 5.3) while facing the Phoenix sky glow, against
+  31–78 for the others. JPEG values are gamma-encoded, so this
+  understates the photon gain. Day colour on that camera will be off.
+* **Next:** redo the ground mask in daylight (it was drawn on the old
+  alignment), re-solve after moving a camera, derotation for long stacks.
+
+---

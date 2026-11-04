@@ -21,6 +21,7 @@ Five-camera all-sky observatory on a Jetson Orin Nano Super. Start with
 | Detail 5120² live; full-sharpness zoom, 6656² stills and raw camera frames (D-023) | working |
 | Ground mask: hide houses and trees, auto-detected and editable on the page (D-024) | working |
 | Night: 1 s exposures, live stacking, star stretch, Night/Day presets (D-025, D-026) | working |
+| Alignment and lenses solved from the stars (`tools/align_from_stars.py`, D-027) | working: all five cameras, seams ~1 dome pixel |
 | Shared exposure control, vignetting, recording, astro, the rest of the planetarium console | not started |
 
 ## Layout
@@ -30,7 +31,7 @@ config/     site, cameras, capture modes, mediamtx (YAML)
 pipeline/   skydome_pipeline: geometry, camera models, projections, stitch tables, sky simulator
             native/: skydome-live (C++/CUDA capture, GPU stitch, encode)
 tools/      coverage_report.py, identify_cameras.py, gen_udev_rules.py, calibrate_intrinsics.py,
-            build_stitch_lut.py, run_live.py, run_server.py, bringup/phase0.sh
+            build_stitch_lut.py, run_live.py, run_server.py, align_from_stars.py, bringup/phase0.sh
 server/     skydome_server: web server + API (app.py), ONVIF (device, media, imaging, discovery),
             camera settings, live mode/stats, Jetson health
 web/        the web page (React + Vite + Tailwind); web/dist is the built page, committed
