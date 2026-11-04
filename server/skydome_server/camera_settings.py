@@ -44,6 +44,11 @@ FALLBACK_CONTROLS = {c.name: c for c in (
 # cameras also report pan/tilt/zoom/privacy controls they refuse to set
 # (EPIPE), which a stored value would retry every few seconds forever.
 IMAGE_CONTROLS = frozenset(FALLBACK_CONTROLS)
+# Held at the camera's default on every camera: the stitch's alignment
+# assumes the whole sensor picture. A digital zoom (1.31x, saved from the web
+# page before IMAGE_CONTROLS existed) is kept by the camera's firmware across
+# power cycles and silently cropped all five pictures on 2026-11-03
+GEOMETRY_DEFAULTS = ("zoom_absolute",)
 
 AUTO_EXPOSURE_MANUAL = 1
 AUTO_EXPOSURE_AUTO = 3   # "aperture priority", the cameras' only automatic mode
@@ -130,32 +135,37 @@ class CameraSettings:
     def _apply(self, cam: CameraNode) -> None:
         with self._lock:
             values = dict(self.values)
-        if values:
-            applied = 0
-            try:
-                with self._open(cam.device) as d:
-                    ctrls = d.controls()
-                    for name in sorted(values, key=lambda n: (n not in _MASTERS, n)):
-                        if name not in ctrls:
-                            continue
-                        master = _SLAVES.get(name)
-                        if master and master[0] in ctrls and \
-                                values.get(master[0], ctrls[master[0]].default) != master[1]:
-                            continue
+        applied = 0
+        try:
+            with self._open(cam.device) as d:
+                ctrls = d.controls()
+                for name in GEOMETRY_DEFAULTS:
+                    if name in ctrls:
                         try:
-                            d.set(ctrls[name].id, values[name])
-                            applied += 1
-                        except OSError as e:
-                            # This camera refuses this value: the rest still go on, and it
-                            # isn't retried until the camera is replugged or the value changes
-                            if (cam.device, name) not in self._refused:
-                                self._refused.add((cam.device, name))
-                                self._log(f"camera settings: {cam.device} refused {name}={values[name]}: {e}",
-                                          file=sys.stderr)
-            except OSError as e:
-                self._log(f"camera settings: {cam.device}: {e}", file=sys.stderr)
-                return   # couldn't open it: retried on the next sync
-            self._log(f"camera settings: applied {applied} to {cam.device}", file=sys.stderr)
+                            d.set(ctrls[name].id, ctrls[name].default)
+                        except OSError:
+                            pass   # a camera without a usable zoom has nothing to undo
+                for name in sorted(values, key=lambda n: (n not in _MASTERS, n)):
+                    if name not in ctrls:
+                        continue
+                    master = _SLAVES.get(name)
+                    if master and master[0] in ctrls and \
+                            values.get(master[0], ctrls[master[0]].default) != master[1]:
+                        continue
+                    try:
+                        d.set(ctrls[name].id, values[name])
+                        applied += 1
+                    except OSError as e:
+                        # This camera refuses this value: the rest still go on, and it
+                        # isn't retried until the camera is replugged or the value changes
+                        if (cam.device, name) not in self._refused:
+                            self._refused.add((cam.device, name))
+                            self._log(f"camera settings: {cam.device} refused {name}={values[name]}: {e}",
+                                      file=sys.stderr)
+        except OSError as e:
+            self._log(f"camera settings: {cam.device}: {e}", file=sys.stderr)
+            return   # couldn't open it: retried on the next sync
+        self._log(f"camera settings: applied {applied} to {cam.device}", file=sys.stderr)
         self._applied.add(cam.key)
 
     def _save(self) -> None:

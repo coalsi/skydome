@@ -163,6 +163,9 @@ def test_only_picture_controls_and_a_refusal_doesnt_block_the_rest(tmp_path):
         def set(self, cid, value):
             if cid == FALLBACK_CONTROLS["contrast"].id:
                 raise OSError(32, "Broken pipe")
+            if cid == 0x009A090D:
+                FakeDevice.log.append((self.path, "zoom_absolute", value))
+                return
             super().set(cid, value)
 
     FakeDevice.log = []
@@ -177,6 +180,7 @@ def test_only_picture_controls_and_a_refusal_doesnt_block_the_rest(tmp_path):
         s.update({"zoom_absolute": 200})
     s.sync()
     assert ("/dev/video0", "brightness", 120) in FakeDevice.log           # applied despite contrast failing
+    assert ("/dev/video0", "zoom_absolute", 100) in FakeDevice.log        # zoom held at the camera's default
     assert sum("refused contrast" in m for m in logs) == 1
     s.sync()                                                               # already applied: not retried
     assert sum("refused contrast" in m for m in logs) == 1
