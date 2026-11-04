@@ -64,6 +64,8 @@ struct Options {
     std::string stretch;                   // night stretch file: "black k"
     std::string stack;                     // stacking depth file: "frames" (0 or 1 = off)
     std::string asi_settings, asi_caps;    // ZWO camera: picture settings in, control ranges out
+    std::string watch_dir;                 // the sky watcher's feed (D-030)
+    double watch_fps = 5;
 };
 
 // A request older than this means nobody is zoomed in any more; the zoom
@@ -127,7 +129,10 @@ void usage() {
                  "  --raw-dir DIR        when DIR/request appears, save each camera's next frame as sent\n"
                  "                       (DIR/<camera>.jpg, or .pgm from a ZWO camera)\n"
                  "  --asi-settings FILE  ZWO camera picture settings (key: value lines); reread when it changes\n"
-                 "  --asi-caps FILE      write the ZWO camera's control ranges here when it opens (JSON)\n");
+                 "  --asi-caps FILE      write the ZWO camera's control ranges here when it opens (JSON)\n"
+                 "  --watch-dir DIR      feed the sky watcher: each ZWO camera's luma at half size, DIR/<camera>.y16\n"
+                 "                       and .json (16-bit, x256)\n"
+                 "  --watch-fps N        at most N frames a second to it (default 5)\n");
 }
 
 Options parse(int argc, char** argv) {
@@ -175,6 +180,8 @@ Options parse(int argc, char** argv) {
         else if (a == "--stack") o.stack = next();
         else if (a == "--asi-settings") o.asi_settings = next();
         else if (a == "--asi-caps") o.asi_caps = next();
+        else if (a == "--watch-dir") o.watch_dir = next();
+        else if (a == "--watch-fps") o.watch_fps = std::stod(next());
         else if (a == "-h" || a == "--help") {
             usage();
             std::exit(0);
@@ -201,7 +208,9 @@ bool is_asi(const std::string& device) { return device == "asi" || device.rfind(
 std::unique_ptr<FrameSource> make_source(const Options& o, const std::string& name, const std::string& dev) {
     if (!is_asi(dev)) return std::make_unique<CameraSource>(name, dev, o.capture);
 #ifdef SKYDOME_ASI
-    return std::make_unique<AsiSource>(name, dev.size() > 4 ? dev.substr(4) : "", o.asi_settings, o.asi_caps);
+    auto src = std::make_unique<AsiSource>(name, dev.size() > 4 ? dev.substr(4) : "", o.asi_settings, o.asi_caps);
+    if (!o.watch_dir.empty()) src->set_tap(o.watch_dir, o.watch_fps);
+    return src;
 #else
     throw std::runtime_error("built without ZWO's SDK: run tools/get_zwo_sdk.sh, then rebuild");
 #endif

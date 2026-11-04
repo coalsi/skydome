@@ -46,10 +46,13 @@ sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import uvicorn  # noqa: E402
+import yaml  # noqa: E402
 from run_live import (ASI_CAPS, ASI_SETTINGS, FULL_SNAPSHOT, HORIZON_FILE, MODE_FILE, MODES, RAW_DIR,  # noqa: E402
                       SNAPSHOT, STATS_FILES, STACK_FILE, STRETCH_FILE, ZOOM_FILE)
 from skydome_pipeline.config import load_cameras, load_modes, load_site  # noqa: E402
 from skydome_server.app import Live, create_app  # noqa: E402
+from skydome_pipeline.skymodel import SkyModel  # noqa: E402
+from skydome_server.objects import ObjectLog  # noqa: E402
 from skydome_server.sky import Sky  # noqa: E402
 from skydome_server.asi_settings import AsiSettings  # noqa: E402
 from skydome_server.camera_settings import CameraSettings  # noqa: E402
@@ -62,7 +65,18 @@ from skydome_server.system import System  # noqa: E402
 
 CREDENTIALS = ROOT / "var" / "onvif_credentials.yaml"
 CAMERA_SETTINGS = ROOT / "var" / "camera_settings.yaml"
+# This install's own settings for the sky watcher (D-030), not in git: e.g.
+#   adsb_url: http://<receiver>/tar1090/data/aircraft.json
+WATCH_CONFIG = ROOT / "var" / "watch.yaml"
+TLE_FILE = ROOT / "var" / "tle" / "active.tle"   # every active satellite, from CelesTrak daily
 WEB_DIST = ROOT / "web" / "dist"
+
+
+def watch_config(path: Path) -> dict:
+    try:
+        return yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
 
 
 def log(*args, **kw) -> None:
@@ -130,11 +144,14 @@ def main() -> int:
               ROOT / "var" / "calibration.auto",
               [sys.executable, str(ROOT / "tools" / "align_from_stars.py"), "--save", "--status", str(calibration),
                "--url", f"http://127.0.0.1:{args.port}/api/raw.zip"],
-              preset_file=ROOT / "var" / "preset.auto" if zwo else None)
+              preset_file=ROOT / "var" / "preset.auto" if zwo else None,
+              model=SkyModel(site.latitude_deg, site.longitude_deg, site.elevation_m, TLE_FILE,
+                             watch_config(WATCH_CONFIG).get("adsb_url")))
     app = create_app(settings, live_cfg,
                      System(ROOT / "var"), snapshot,
                      onvif=OnvifEndpoint(services, UsernameTokenAuth(users), log=log), web_dir=WEB_DIST,
-                     full=SnapshotSource(Path(FULL_SNAPSHOT), timeout=10, fresh=2), sky=sky)
+                     full=SnapshotSource(Path(FULL_SNAPSHOT), timeout=10, fresh=2), sky=sky,
+                     objects=ObjectLog(ROOT / "var" / "watch" / "objects.db", ROOT / "var" / "watch" / "media"))
     sky.apply_preset = app.state.apply_preset   # Night at dusk, Day at dawn
     if not (WEB_DIST / "index.html").exists():
         log(f"{WEB_DIST} not built: the page says so; the API and ONVIF work")

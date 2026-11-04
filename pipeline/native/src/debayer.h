@@ -27,3 +27,7 @@ inline void bayer_red(int pattern, int& rx, int& ry) {
 // all tightly packed. Asynchronous on `stream`.
 void debayer_to_yuv(const uint16_t* raw, int w, int h, int pitch, const DebayerParams& p, float* y, float* u,
                     float* v, uint8_t* y8, uint8_t* u8, uint8_t* v8, cudaStream_t stream);
+
+// The sky watcher's copy (D-030): float luma (0..255) -> half size, 2x2 mean,
+// x256 in 16 bits (keeps fractions of a level). out: (w/2) x (h/2), packed.
+void luma_half_u16(const float* y, int w, int h, uint16_t* out, cudaStream_t stream);

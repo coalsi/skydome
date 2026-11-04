@@ -1,0 +1,17 @@
+# The sky watcher (DECISIONS.md D-030): everything moving in the all-sky
+# camera's view, identified and logged (tools/run_watch.py). Needs skydome-live.
+#   sudo cp systemd/skydome-watch.service /etc/systemd/system/ && sudo systemctl enable --now skydome-watch
+[Unit]
+Description=SkyDome sky watcher
+After=skydome-live.service
+
+[Service]
+User=skydome
+WorkingDirectory=/home/skydome/skydome
+ExecStart=/home/skydome/.local/bin/uv run --project pipeline tools/run_watch.py
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

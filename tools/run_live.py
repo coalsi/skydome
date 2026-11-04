@@ -69,6 +69,8 @@ STRETCH_FILE = ROOT / "var" / "stretch.txt"  # night stretch "black k" from the 
 STACK_FILE = ROOT / "var" / "stack.txt"      # stacking depth in frames (D-026)
 ASI_SETTINGS = ROOT / "var" / "asi_settings.yaml"   # the ZWO camera's picture settings (D-029)
 ASI_CAPS = ROOT / "var" / "asi_caps.json"           # its control ranges, written when it opens
+WATCH_DIR = "/dev/shm/skydome-watch"   # frames for the sky watcher (run_watch.py, D-030), in memory
+WATCH_FPS = 5
 # The Jetson's USB-C port often misses a camera that's plugged in at power-on
 # (the zenith camera, 3 cold starts out of 4 on 2026-11-03); switching the
 # port out of host mode and back finds it, like replugging it
@@ -128,8 +130,10 @@ def launch(mode_name: str, devices: dict[str, str], args, extra: list[str]) -> s
            "--full-lut", str(lut_path(FULL_SIZE)), "--full-snapshot", FULL_SNAPSHOT,
            "--zoom-file", ZOOM_FILE, "--zoom-size", f"{ZOOM_SIZE[0]}x{ZOOM_SIZE[1]}",
            "--horizon", str(HORIZON_FILE), "--raw-dir", str(RAW_DIR), "--stretch", str(STRETCH_FILE),
-           "--stack", str(STACK_FILE), "--asi-settings", str(ASI_SETTINGS), "--asi-caps", str(ASI_CAPS)]
+           "--stack", str(STACK_FILE), "--asi-settings", str(ASI_SETTINGS), "--asi-caps", str(ASI_CAPS),
+           "--watch-dir", WATCH_DIR, "--watch-fps", str(WATCH_FPS)]
     RAW_DIR.mkdir(exist_ok=True)
+    Path(WATCH_DIR).mkdir(exist_ok=True)
     for name, dev in devices.items():
         cmd += ["--camera", f"{name}={dev}"]
     cmd += extra

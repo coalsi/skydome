@@ -26,13 +26,14 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from . import live
 from .asi_settings import AsiSettings
 from .camera_settings import CameraSettings
+from .objects import ObjectLog
 from .sky import BUTTON_SUN_ALT, Sky
 from .onvif.http import OnvifEndpoint, SnapshotSource
 from .system import System
@@ -109,7 +110,8 @@ class Live:
 
 def create_app(settings: CameraSettings | AsiSettings, live_cfg: Live, system: System, snapshot: SnapshotSource,
                onvif: OnvifEndpoint | None = None, web_dir: Path | None = None,
-               full: SnapshotSource | None = None, sky: Sky | None = None) -> FastAPI:
+               full: SnapshotSource | None = None, sky: Sky | None = None,
+               objects: ObjectLog | None = None) -> FastAPI:
     app = FastAPI(title="SkyDome", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
 
     # ---- status ------------------------------------------------------------------
@@ -294,6 +296,13 @@ def create_app(settings: CameraSettings | AsiSettings, live_cfg: Live, system: S
         """Stars up now with their names: rows of [name, designation, constellation, mag, az, alt]."""
         return need_sky().stars(min(max(max_mag, 0.0), 6.5))
 
+    @app.get("/api/sky/moving")
+    def get_moving() -> dict:
+        """What moves, now (D-030): bodies [{name, kind, az, alt, ...}], satellites
+        [[name, norad, az, alt, range_km, sunlit]], planes [[callsign, hex, az, alt,
+        range_km, alt_ft, speed_kt, track]] (None without an ADS-B receiver)."""
+        return need_sky().moving()
+
     @app.get("/api/calibration")
     def get_calibration() -> dict:
         return need_sky().status()
@@ -313,6 +322,50 @@ def create_app(settings: CameraSettings | AsiSettings, live_cfg: Live, system: S
         s = need_sky()
         s.set_auto(auto)
         return s.status()
+
+    # ---- the sky watcher's log (D-030) ------------------------------------------------
+
+    def need_objects() -> ObjectLog:
+        if objects is None:
+            raise HTTPException(404, "the sky watcher isn't set up")
+        return objects
+
+    @app.get("/api/objects")
+    def list_objects(limit: int = 100, before: int | None = None, kind: str | None = None,
+                     unknown: bool = False) -> dict:
+        """What the sky watcher saw, newest first: each with its path ([t, az, alt]),
+        what it is (kind), what the watcher made of it, your label, pictures."""
+        log = need_objects()
+        return {"objects": log.list(limit, before, kind, unknown), "labels": log.labels()}
+
+    @app.get("/api/objects/summary")
+    def objects_summary(hours: float = 24) -> dict:
+        return need_objects().summary(hours)
+
+    @app.get("/api/objects/media/{rel:path}", include_in_schema=False)
+    def object_media(rel: str) -> FileResponse:
+        p = need_objects().media_file(rel)
+        if p is None:
+            raise HTTPException(404, "no such picture")
+        return FileResponse(p, headers={"Cache-Control": "max-age=86400"})
+
+    @app.get("/api/objects/{oid}")
+    def get_object(oid: int) -> dict:
+        o = need_objects().get(oid)
+        if o is None:
+            raise HTTPException(404, "no such object")
+        return o
+
+    @app.put("/api/objects/{oid}")
+    def label_object(oid: int, label: str | None = Body(None, embed=True)) -> dict:
+        """Say what it was (or null to take your label back); the watcher learns from it."""
+        try:
+            o = need_objects().set_label(oid, label)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if o is None:
+            raise HTTPException(404, "no such object")
+        return o
 
     # ---- ground mask (D-024) ---------------------------------------------------------
 

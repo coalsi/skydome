@@ -73,7 +73,25 @@ __global__ void debayer_kernel(const uint16_t* raw, int w, int h, int pitch, Deb
     v8[j] = to8(vv);
 }
 
+__global__ void half_kernel(const float* y, int w, int h, uint16_t* out) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int yy = blockIdx.y * blockDim.y + threadIdx.y;
+    const int hw = w / 2, hh = h / 2;
+    if (x >= hw || yy >= hh) return;
+    const float* r0 = y + static_cast<size_t>(2 * yy) * w + 2 * x;
+    const float* r1 = r0 + w;
+    const float m = 0.25f * (r0[0] + r0[1] + r1[0] + r1[1]);
+    out[static_cast<size_t>(yy) * hw + x] = static_cast<uint16_t>(fminf(fmaxf(m * 256.f + 0.5f, 0.f), 65535.f));
+}
+
 }  // namespace
+
+void luma_half_u16(const float* y, int w, int h, uint16_t* out, cudaStream_t stream) {
+    const dim3 block(32, 8);
+    const dim3 grid((w / 2 + block.x - 1) / block.x, (h / 2 + block.y - 1) / block.y);
+    half_kernel<<<grid, block, 0, stream>>>(y, w, h, out);
+    cuda_check(cudaGetLastError(), "half luma kernel launch");
+}
 
 void debayer_to_yuv(const uint16_t* raw, int w, int h, int pitch, const DebayerParams& p, float* y, float* u,
                     float* v, uint8_t* y8, uint8_t* u8, uint8_t* v8, cudaStream_t stream) {

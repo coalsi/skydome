@@ -73,6 +73,7 @@ AsiSource::~AsiSource() {
     stop_.store(true);
     if (thread_.joinable()) thread_.join();
     cudaFree(d_raw_);
+    cudaFree(d_tap_);
     for (int k = 0; k < 3; ++k) {
         cudaFree(d_f_[k]);
         cudaFree(d_8_[k]);
@@ -277,6 +278,9 @@ void AsiSource::on_frame() {
     const AutoExposure::Setting taken = older_pending_ ? older_ : active_;
     older_pending_ = false;
     const double level = sky_level(host_);
+    // The frame's middle: it arrived as its exposure ended
+    const double t_mid = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count() -
+                         taken.exposure_us / 2e6;
     bool auto_on;
     {
         std::lock_guard<std::mutex> lock(m_);
@@ -286,6 +290,7 @@ void AsiSource::on_frame() {
         // poll() trades ready_ for its upload buffer, empty at first: keep ours whole
         if (host_.size() != ready_.size()) host_.assign(ready_.size(), 0);
         shown_ = taken;
+        shown_time_ = t_mid;
         level_ = level;
     }
     if (auto_on) ae_.update(level, taken);
@@ -380,6 +385,8 @@ void AsiSource::ensure_buffers(int w, int h) {
 void AsiSource::poll(Clock::time_point) {
     int w, h, bayer;
     DebayerParams p;
+    AutoExposure::Setting taken;
+    double t_mid;
     {
         std::lock_guard<std::mutex> lock(m_);
         if (!open_) has_ = false;   // the camera's gone: leave it out of the dome until it's back
@@ -392,6 +399,8 @@ void AsiSource::poll(Clock::time_point) {
         p.wb_r = settings_.wb_red / 100.f;
         p.wb_b = settings_.wb_blue / 100.f;
         p.gamma = std::max(settings_.gamma, 10) / 100.f;
+        taken = shown_;
+        t_mid = shown_time_;
     }
     if (upload_.size() != static_cast<size_t>(w) * h) return;   // reopened at another size meanwhile
     ensure_buffers(w, h);
@@ -407,6 +416,50 @@ void AsiSource::poll(Clock::time_point) {
         raw_wanted_ = false;
         write_pgm(raw_base_ + ".pgm");
     }
+    const auto now = Clock::now();
+    if (!tap_dir_.empty() && now >= next_tap_) {
+        next_tap_ = now + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(tap_period_s_));
+        write_tap(taken, t_mid);
+    }
+}
+
+void AsiSource::set_tap(const std::string& dir, double max_fps) {
+    tap_dir_ = dir;
+    tap_period_s_ = max_fps > 0 ? 1.0 / max_fps : 0;
+}
+
+void AsiSource::write_tap(const AutoExposure::Setting& s, double t_mid) {
+    const int hw = dev_w_ / 2, hh = dev_h_ / 2;
+    const size_t n = static_cast<size_t>(hw) * hh;
+    if (!d_tap_ || tap_host_.size() != n) {
+        cudaFree(d_tap_);
+        cuda_check(cudaMalloc(&d_tap_, n * sizeof(uint16_t)), "cudaMalloc tap");
+        tap_host_.assign(n, 0);
+    }
+    luma_half_u16(d_f_[0], dev_w_, dev_h_, d_tap_, nullptr);
+    cuda_check(cudaMemcpy(tap_host_.data(), d_tap_, n * sizeof(uint16_t), cudaMemcpyDeviceToHost), "download tap");
+    // The picture first, then its description: the watcher reads the JSON to know a new frame is there
+    const std::string base = tap_dir_ + "/" + name_;
+    if (FILE* f = std::fopen((base + ".y16.tmp").c_str(), "wb")) {
+        const bool ok = std::fwrite(tap_host_.data(), sizeof(uint16_t), n, f) == n;
+        if (std::fclose(f) != 0 || !ok) return;
+        std::rename((base + ".y16.tmp").c_str(), (base + ".y16").c_str());
+    } else {
+        return;
+    }
+    float gamma;
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        gamma = settings_.gamma / 100.f;
+    }
+    char json[320];
+    std::snprintf(json, sizeof json,
+                  "{\"seq\":%lu,\"time\":%.3f,\"exposure_us\":%ld,\"gain\":%d,\"width\":%d,\"height\":%d,"
+                  "\"scale\":256,\"gamma\":%.2f,\"full_width\":%d,\"full_height\":%d}\n",
+                  static_cast<unsigned long>(seq_), t_mid, s.exposure_us, s.gain, hw, hh, gamma, dev_w_, dev_h_);
+    const std::string tmp = base + ".json.tmp";
+    std::ofstream(tmp) << json;
+    std::rename(tmp.c_str(), (base + ".json").c_str());
 }
 
 void AsiSource::request_raw(const std::string& base) {

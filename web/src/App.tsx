@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { api, type Mode, type Status } from "./api";
+import { api, type Mode, type SkyObject, type Status } from "./api";
 import { DomeView } from "./DomeView";
 import { GroundMask } from "./GroundMask";
 import { SkyPanel } from "./SkyPanel";
 import { HealthPanel } from "./HealthPanel";
+import { ObjectsPanel } from "./ObjectsPanel";
 import { SettingsPanel } from "./SettingsPanel";
 
-type Tab = "cameras" | "health";
+type Tab = "cameras" | "objects" | "health";
+const TAB_NAMES: Record<Tab, string> = { cameras: "Camera settings", objects: "Objects", health: "Health" };
 
 function useStatus() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -51,7 +53,9 @@ function useNightTheme(): [boolean, (on: boolean) => void] {
 export default function App() {
   const { status, setStatus, online } = useStatus();
   const [night, setNight] = useNightTheme();
-  const [tab, setTab] = useState<Tab>("cameras");
+  // An alert's link (#objects/<id>) opens the Objects tab
+  const [tab, setTab] = useState<Tab>(() => (location.hash.startsWith("#objects") ? "objects" : "cameras"));
+  const [picked, setPicked] = useState<SkyObject | null>(null);
   const [switching, setSwitching] = useState(false);
   const [maskEdit, setMaskEdit] = useState<number[] | null>(null);
 
@@ -90,7 +94,8 @@ export default function App() {
         </header>
         <div className="aspect-square w-full lg:aspect-auto lg:min-h-0 lg:flex-1">
           <DomeView path={path} zoomPath={status?.zoom_path ?? "dome-zoom"} edgeDeg={status?.edge_zenith_deg ?? 100}
-            mask={maskEdit ? { alt: maskEdit, onChange: setMaskEdit } : null} />
+            mask={maskEdit ? { alt: maskEdit, onChange: setMaskEdit } : null}
+            track={tab === "objects" ? picked?.path ?? null : null} />
         </div>
       </main>
 
@@ -105,15 +110,21 @@ export default function App() {
           <GroundMask status={status} editing={maskEdit} onEdit={setMaskEdit} />
         </div>
         <div className="flex border-b border-line" role="tablist">
-          {(["cameras", "health"] as Tab[]).map((t) => (
+          {(["cameras", "objects", "health"] as Tab[]).map((t) => (
             <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-              className={`flex-1 py-2.5 text-sm capitalize ${tab === t ? "border-b-2 border-accent text-fg" : "text-muted hover:text-fg"}`}>
-              {t === "cameras" ? "Camera settings" : "Health"}
+              className={`flex-1 py-2.5 text-sm ${tab === t ? "border-b-2 border-accent text-fg" : "text-muted hover:text-fg"}`}>
+              {TAB_NAMES[t]}
             </button>
           ))}
         </div>
         <div className="p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
-          {tab === "cameras" ? <SettingsPanel /> : <HealthPanel status={status} />}
+          {tab === "cameras" ? <SettingsPanel />
+            : tab === "objects" ? <ObjectsPanel selected={picked?.id ?? null} onSelect={(o) => {
+              setPicked(o);
+              // On a phone the dome is above the panel: bring it into view to show the path
+              if (o && window.innerWidth < 1024) window.scrollTo({ top: 0, behavior: "smooth" });
+            }} />
+            : <HealthPanel status={status} />}
         </div>
       </aside>
     </div>

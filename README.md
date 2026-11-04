@@ -24,6 +24,7 @@ Five-camera all-sky observatory on a Jetson Orin Nano Super. Start with
 | Alignment and lenses solved from the stars (`tools/align_from_stars.py`, D-027) | working: all five cameras, seams ~1 dome pixel |
 | Compass and star names on the page; calibrates itself from the stars each night, wherever it's set up (D-028) | working |
 | One ZWO ASI676MC all-sky camera in place of the five UVC cameras: 12-bit raw, automatic exposure from daylight to 20 s night frames, Night/Day by the Sun (D-029) | written and tested without the camera; bring-up when it arrives |
+| Sky watcher: planets, Moon, satellites and aircraft labelled on the dome; every moving object followed, identified (ADS-B, orbits, what you've taught it), logged on an Objects tab; unknowns flagged (D-030) | written and tested on a simulated sky; tuning on the camera |
 | Shared exposure control, vignetting, recording, astro, the rest of the planetarium console | not started |
 
 ## Layout

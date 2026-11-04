@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type StarRow } from "./api";
+import { api, type Body, type Moving, type PlaneRow, type SatRow, type StarRow } from "./api";
 import { useWhep } from "./useWhep";
 
 interface View {
@@ -17,16 +17,19 @@ const ZOOM_ASPECT = 4 / 3; // the zoom stream is 1600 x 1200
 const SETTLE_MS = 1200;    // request -> new picture on screen, with margin
 const ZOOM_LINGER_MS = 20000;
 const SKY_EVERY_MS = 20000;   // stars drift ~0.08° in that
+const MOVING_EVERY_MS = 2000; // planes and satellites (D-030)
 const COMPASS: [string, number, boolean][] = [
   ["N", 0, true], ["NE", 45, false], ["E", 90, true], ["SE", 135, false],
   ["S", 180, true], ["SW", 225, false], ["W", 270, true], ["NW", 315, false],
 ];
 
-interface Hover {
-  star: StarRow;
-  x: number;   // where the star is on screen
-  y: number;
-}
+// What's under the pointer, and where it is on screen
+type Hover = { x: number; y: number } & (
+  | { kind: "star"; star: StarRow }
+  | { kind: "body"; body: Body }
+  | { kind: "sat"; sat: SatRow }
+  | { kind: "plane"; plane: PlaneRow }
+);
 
 // The named stars up now (D-028), refreshed as they drift
 function useStars() {
@@ -39,6 +42,22 @@ function useStars() {
   }, []);
   return stars;
 }
+
+// Planets, the Moon, satellites and aircraft (D-030), every couple of seconds while labels are on
+function useMoving(on: boolean) {
+  const [moving, setMoving] = useState<Moving | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    const load = () => api.moving().then(setMoving).catch(() => {});
+    load();
+    const t = window.setInterval(load, MOVING_EVERY_MS);
+    return () => window.clearInterval(t);
+  }, [on]);
+  return on ? moving : null;
+}
+
+// Satellites worth drawing: in sunlight while the sky's dark enough to see them
+const litSats = (m: Moving | null) => (m && m.sun_alt < -6 ? m.satellites.filter((s) => s[5] && s[3] > 0) : []);
 
 function readLabels(): boolean {
   try {
@@ -55,8 +74,9 @@ export interface MaskEdit {
 
 // The live dome over WebRTC: wheel/pinch zoom, drag to pan; full-detail zoom
 // stream when zoomed in; the ground-mask editor when `mask` is set
-export function DomeView({ path, zoomPath, edgeDeg, mask }: {
+export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
   path: string; zoomPath: string; edgeDeg: number; mask: MaskEdit | null;
+  track?: [number, number, number][] | null; // an object from the sky watcher's log: [t, az, alt]
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -68,6 +88,7 @@ export function DomeView({ path, zoomPath, edgeDeg, mask }: {
   const conn = useWhep(path, video);
   const stars = useStars();
   const [labels, setLabels] = useState(readLabels);
+  const moving = useMoving(labels && !mask);
   const [hover, setHover] = useState<Hover | null>(null);
   const tap = useRef<{ x: number; y: number; t: number } | null>(null);
 
@@ -178,16 +199,21 @@ export function DomeView({ path, zoomPath, edgeDeg, mask }: {
     const u = 0.5 - rho * Math.sin(a), v = 0.5 - rho * Math.cos(a);
     return { x: view.x + view.s * ((size.W - D) / 2 + u * D), y: view.y + view.s * ((size.H - D) / 2 + v * D) };
   };
-  // The star nearest the point within reach, leaning towards the brighter ones
+  // What's nearest the point within reach: aircraft, satellites, planets and the Moon
+  // first, then stars, leaning towards the brighter ones
   const starAt = (p: { x: number; y: number }, reach: number): Hover | null => {
     let best: Hover | null = null, score = Infinity;
-    for (const st of stars) {
-      const q = toScreen(st[4], st[5]);
+    const consider = (az: number, alt: number, bias: number, make: (q: { x: number; y: number }) => Hover) => {
+      const q = toScreen(az, alt);
       const d = Math.hypot(q.x - p.x, q.y - p.y);
-      if (d > reach) continue;
-      const sc = d + st[3] * 1.5;
-      if (sc < score) [best, score] = [{ star: st, ...q }, sc];
+      if (d <= reach && d + bias < score) [best, score] = [make(q), d + bias];
+    };
+    for (const pl of moving?.planes ?? []) consider(pl[2], pl[3], -6, (q) => ({ kind: "plane", plane: pl, ...q }));
+    for (const sat of litSats(moving)) consider(sat[2], sat[3], -4, (q) => ({ kind: "sat", sat, ...q }));
+    for (const b of moving?.bodies ?? []) {
+      if (b.kind !== "sun" && b.alt > 0) consider(b.az, b.alt, -5, (q) => ({ kind: "body", body: b, ...q }));
     }
+    for (const st of stars) consider(st[4], st[5], st[3] * 1.5, (q) => ({ kind: "star", star: st, ...q }));
     return best;
   };
   const toggleLabels = () => {
@@ -313,7 +339,60 @@ export function DomeView({ path, zoomPath, edgeDeg, mask }: {
                   stroke="rgba(0,0,0,0.85)" strokeWidth={3} paintOrder="stroke">{t}</text>
               );
             })}
+            {moving?.bodies.filter((b) => b.kind !== "sun" && b.alt > 0).map((b) => {
+              const q = toScreen(b.az, b.alt);
+              return (
+                <g key={b.name}>
+                  <circle cx={q.x} cy={q.y} r={b.kind === "moon" ? 9 : 4} fill="none" stroke="#fb923c" strokeWidth={1.2} />
+                  <text x={q.x + (b.kind === "moon" ? 13 : 8)} y={q.y} dominantBaseline="central" fontSize={11}
+                    fill="#fdba74" stroke="rgba(0,0,0,0.85)" strokeWidth={3} paintOrder="stroke">{b.name}</text>
+                </g>
+              );
+            })}
+            {litSats(moving).map((sat) => {
+              const q = toScreen(sat[2], sat[3]);
+              const named = !sat[0].startsWith("STARLINK") && !sat[0].startsWith("NORAD");
+              return (
+                <g key={sat[1]}>
+                  <rect x={q.x - 2.5} y={q.y - 2.5} width={5} height={5} transform={`rotate(45 ${q.x} ${q.y})`}
+                    fill="#22d3ee" opacity={0.85} />
+                  {named && (
+                    <text x={q.x + 6} y={q.y - 6} fontSize={10} fill="#67e8f9" stroke="rgba(0,0,0,0.85)" strokeWidth={3}
+                      paintOrder="stroke">{sat[0]}</text>
+                  )}
+                </g>
+              );
+            })}
+            {moving?.planes?.map((pl) => {
+              const q = toScreen(pl[2], pl[3]);
+              // Heading on the dome: east is on the left, so a plane's track turns the other way
+              const rot = -pl[7];
+              return (
+                <g key={pl[1]}>
+                  <path d="M0,-6 L4,5 L0,3 L-4,5 Z" transform={`translate(${q.x} ${q.y}) rotate(${rot})`}
+                    fill="#fde047" stroke="rgba(0,0,0,0.8)" strokeWidth={1} />
+                  <text x={q.x + 8} y={q.y + 3} fontSize={10} fill="#fef08a" stroke="rgba(0,0,0,0.85)" strokeWidth={3}
+                    paintOrder="stroke">{pl[0]}</text>
+                </g>
+              );
+            })}
             {hover && <circle cx={hover.x} cy={hover.y} r={10} fill="none" stroke="#facc15" strokeWidth={1.5} />}
+          </svg>
+        )}
+        {track && track.length > 0 && D > 0 && (
+          <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+            {(() => {
+              const pts = track.map(([, az, alt]) => toScreen(az, alt));
+              const a = pts[0], b = pts[pts.length - 1];
+              return (
+                <>
+                  <polyline points={pts.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#f472b6"
+                    strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" opacity={0.9} />
+                  <circle cx={a.x} cy={a.y} r={5} fill="#f472b6" />
+                  <circle cx={b.x} cy={b.y} r={9} fill="none" stroke="#f472b6" strokeWidth={2} />
+                </>
+              );
+            })()}
           </svg>
         )}
         {labels && !mask && hover && (
@@ -335,7 +414,8 @@ export function DomeView({ path, zoomPath, edgeDeg, mask }: {
       )}
 
       <div className="absolute right-3 bottom-3 flex gap-2">
-        <IconButton label={labels ? "Hide compass and star names" : "Show compass and star names (hover or tap a star)"}
+        <IconButton label={labels ? "Hide compass, names, satellites and aircraft"
+          : "Show compass, star and planet names, satellites and aircraft (hover or tap one)"}
           onClick={toggleLabels} active={labels}>
           <circle cx="12" cy="12" r="8.5" />
           <path d="M12 5.5l2 6.5-2 6.5-2-6.5z" />
@@ -400,21 +480,39 @@ function MaskOverlay({ alt, edgeDeg, style }: { alt: number[]; edgeDeg: number; 
   );
 }
 
-// A star's name by the pointer, kept inside the view
+// What's under the pointer, by it, kept inside the view
 function StarTip({ hover, W, H }: { hover: Hover; W: number; H: number }) {
-  const [name, desig, con, mag, az, alt] = hover.star;
   const left = hover.x + 230 > W ? hover.x - 230 : hover.x + 16;
   const top = Math.min(Math.max(hover.y - 12, 8), H - 84);
+  const where = (az: number, alt: number) => `${Math.round(alt)}° up, ${compassPoint(az)} (${Math.round(az)}°)`;
+  let title: string, line1: string, line2: string;
+  if (hover.kind === "star") {
+    const [name, desig, con, mag, az, alt] = hover.star;
+    title = name;
+    line1 = `${name !== desig ? `${desig} · ` : ""}${con || "—"}`;
+    line2 = `mag ${mag.toFixed(1)} · ${where(az, alt)}`;
+  } else if (hover.kind === "body") {
+    const b = hover.body;
+    title = b.name;
+    line1 = b.kind === "moon" ? `Moon, ${Math.round((b.phase ?? 0) * 100)}% lit` : "Planet";
+    line2 = where(b.az, b.alt);
+  } else if (hover.kind === "sat") {
+    const [name, norad, az, alt, km] = hover.sat;
+    title = name;
+    line1 = `Satellite · NORAD ${norad} · ${km.toLocaleString()} km away`;
+    line2 = where(az, alt);
+  } else {
+    const [call, hex, az, alt, km, ft, kt] = hover.plane;
+    title = call;
+    line1 = `Aircraft ${hex.toUpperCase()} · ${ft.toLocaleString()} ft · ${kt} kt`;
+    line2 = `${km.toFixed(km < 10 ? 1 : 0)} km away · ${where(az, alt)}`;
+  }
   return (
     <div className="pointer-events-none absolute w-[214px] rounded-lg bg-panel/90 px-3 py-2 text-xs ring-1 ring-line backdrop-blur"
       style={{ left: Math.max(8, left), top }}>
-      <div className="text-sm font-semibold text-fg">{name}</div>
-      <div className="text-muted">
-        {name !== desig ? `${desig} · ` : ""}{con || "—"}
-      </div>
-      <div className="tabular text-muted">
-        mag {mag.toFixed(1)} · {Math.round(alt)}° up, {compassPoint(az)} ({Math.round(az)}°)
-      </div>
+      <div className="text-sm font-semibold text-fg">{title}</div>
+      <div className="text-muted">{line1}</div>
+      <div className="tabular text-muted">{line2}</div>
     </div>
   );
 }

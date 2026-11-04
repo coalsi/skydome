@@ -66,6 +66,56 @@ export interface Control {
 // A star up now: name (proper name, else designation), designation, constellation, magnitude, azimuth, altitude
 export type StarRow = [string, string, string, number, number, number];
 
+// What moves (D-030): the Sun, Moon and planets; satellites; aircraft from ADS-B
+export interface Body {
+  name: string;
+  kind: "sun" | "moon" | "planet";
+  az: number;
+  alt: number;
+  phase?: number; // the Moon: 0 new .. 1 full
+}
+// name, NORAD number, azimuth, altitude, range km, in sunlight
+export type SatRow = [string, number, number, number, number, boolean];
+// callsign, ICAO hex, azimuth, altitude, range km, altitude ft, speed kt, track °
+export type PlaneRow = [string, string, number, number, number, number, number, number];
+export interface Moving {
+  utc: string;
+  sun_alt: number;
+  bodies: Body[];
+  satellites: SatRow[];
+  planes: PlaneRow[] | null;
+  adsb: boolean | null;
+}
+
+// The sky watcher's log (D-030)
+export interface SkyObject {
+  id: number;
+  start: number; // Unix seconds
+  end: number;
+  frames: number;
+  kind: string; // what it is: your label if you gave one
+  auto_kind: string; // the watcher's own
+  confidence: number;
+  source: "adsb" | "tle" | "learned" | "rules";
+  label: string | null;
+  match: string | null; // flight or satellite
+  match_id: string | null;
+  detail: Record<string, number | string> | null;
+  shower: string | null;
+  unknown: boolean;
+  alerted: boolean;
+  sun_alt: number;
+  path: [number, number, number][]; // [t, az, alt]
+  thumb: string | null;
+  clip: string | null;
+}
+export interface ObjectSummary {
+  hours: number;
+  counts: Record<string, number>;
+  unknown: number;
+  labelled: number;
+}
+
 export interface Sky {
   utc: string;
   sun_alt: number;
@@ -142,6 +192,18 @@ export const api = {
     fetch("/api/stack", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ frames }) })
       .then((r) => json<{ frames: number }>(r)),
   sky: (maxMag = 5.5) => fetch(`/api/sky?max_mag=${maxMag}`).then((r) => json<Sky>(r)),
+  moving: () => fetch("/api/sky/moving").then((r) => json<Moving>(r)),
+  objects: (q: { kind?: string; unknown?: boolean; before?: number } = {}) => {
+    const p = new URLSearchParams({ limit: "60" });
+    if (q.kind) p.set("kind", q.kind);
+    if (q.unknown) p.set("unknown", "true");
+    if (q.before) p.set("before", String(q.before));
+    return fetch(`/api/objects?${p}`).then((r) => json<{ objects: SkyObject[]; labels: string[] }>(r));
+  },
+  objectSummary: () => fetch("/api/objects/summary").then((r) => json<ObjectSummary>(r)),
+  labelObject: (id: number, label: string | null) =>
+    fetch(`/api/objects/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label }) })
+      .then((r) => json<SkyObject>(r)),
   calibration: () => fetch("/api/calibration").then((r) => json<Calibration>(r)),
   calibrate: () => fetch("/api/calibration", { method: "POST" }).then((r) => json<Calibration>(r)),
   setCalibrationAuto: (auto: boolean) =>

@@ -132,3 +132,33 @@ def test_raw_download_has_the_16_bit_frame(tmp_path):
     assert r.status_code == 200
     z = zipfile.ZipFile(io.BytesIO(r.content))
     assert z.read("sky.pgm").startswith(b"P5")
+
+
+def test_object_log_and_labels(tmp_path):
+    from skydome_pipeline.skywatch import open_log
+    from skydome_server.objects import ObjectLog
+
+    db = open_log(tmp_path / "objects.db")
+    (tmp_path / "media" / "2026-11-04").mkdir(parents=True)
+    (tmp_path / "media" / "2026-11-04" / "1.jpg").write_bytes(b"\xff\xd8 jpeg \xff\xd9")
+    db.execute("INSERT INTO objects (start, end, frames, kind, auto_kind, confidence, source, unknown, path, "
+               "features, thumb) VALUES (1793800000, 1793800004, 12, 'unknown', 'unknown', 0.3, 'rules', 1, "
+               "'[[1793800000, 40, 50]]', '{\"speed_dps\": 2}', '2026-11-04/1.jpg')")
+    db.commit()
+    settings = AsiSettings(tmp_path / "s.yaml", None, log=quiet)
+    lv = Live(tmp_path / "mode.yaml", [tmp_path / "live.json"], paths=lambda: {})
+    app = create_app(settings, lv, System(tmp_path), SnapshotSource(tmp_path / "s.jpg", timeout=0.1),
+                     objects=ObjectLog(tmp_path / "objects.db", tmp_path / "media"))
+    client = TestClient(app)
+    r = client.get("/api/objects?unknown=true").json()
+    (o,) = r["objects"]
+    assert o["kind"] == "unknown" and o["unknown"] and "plane" in r["labels"]
+    assert client.get(o["thumb"]).content.startswith(b"\xff\xd8")
+    assert client.get("/api/objects/media/2026-11-04/..%2F..%2Fobjects.db").status_code == 404   # stays in media/
+    o = client.put(f"/api/objects/{o['id']}", json={"label": "Bird"}).json()
+    assert (o["kind"], o["label"], o["unknown"], o["auto_kind"]) == ("bird", "bird", False, "unknown")
+    assert client.get("/api/objects/summary").json()["labelled"] == 1
+    assert db.execute("SELECT value FROM meta WHERE key = 'labels'").fetchone()   # the watcher relearns
+    o = client.put(f"/api/objects/{o['id']}", json={"label": None}).json()
+    assert (o["kind"], o["unknown"]) == ("unknown", True)
+    assert client.put(f"/api/objects/{o['id']}", json={"label": "<b>"}).status_code == 400

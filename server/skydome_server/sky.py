@@ -18,6 +18,10 @@ preset_file that doesn't say "off", Night goes on once the Sun is 8° down
 and Day once it's back above 4° down (the gap keeps it from flapping), and
 whatever fits goes on at start-up. Picked by hand, a preset stays until the
 next dusk or dawn.
+
+What moves (D-030): with a SkyModel, moving() gives the Sun, Moon, planets,
+satellites and aircraft for the page to label, and the background loop
+keeps the satellites' orbits a day fresh.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from typing import Callable
 
 import numpy as np
 
+from skydome_pipeline.skymodel import SkyModel
 from skydome_pipeline.star_names import describe
 from skydome_pipeline.stars import Catalogue, apparent_altaz, load_bsc, sun_altaz
 
@@ -62,6 +67,8 @@ class Sky:
     preset_file: Path | None = None                     # Night/Day by the Sun unless this says "off"
     apply_preset: Callable[[str], object] | None = field(default=None, repr=False)
     _preset: str | None = field(default=None, repr=False)   # the last one switched to
+    model: SkyModel | None = None                       # planets, satellites, aircraft (D-030)
+    _moving: tuple = field(default=(0.0, None), repr=False)
     _cat: Catalogue | None = field(default=None, repr=False)
     _labels: list | None = field(default=None, repr=False)
     _cache: tuple = field(default=(0.0, None, None), repr=False)
@@ -102,6 +109,33 @@ class Sky:
 
     def sun_alt(self) -> float:
         return sun_altaz(self.lat, self.lon, self.clock())[1]
+
+    def moving(self) -> dict:
+        """The Sun, Moon and planets, the satellites up (and whether they're
+        lit) and the aircraft, recomputed at most once a second:
+        {"utc", "sun_alt", "bodies": [...], "satellites": [...], "planes": [...] or None, "adsb": ok?}."""
+        now = time.time()
+        with self._lock:
+            t0, doc = self._moving
+            if doc is not None and now - t0 < 1.0:
+                return doc
+        if self.model is None:
+            doc = {"utc": _utc(self.clock()), "sun_alt": round(self.sun_alt(), 2), "bodies": [], "satellites": [],
+                   "planes": None, "adsb": None}
+        else:
+            t = self.clock()
+            snap = self.model.snapshot(t, min_alt=0.0)
+            r = lambda x: round(x, 3)  # noqa: E731
+            doc = {"utc": _utc(t), "sun_alt": round(snap["sun_alt"], 2), "adsb": snap["adsb"],
+                   "bodies": [{**b, "az": r(b["az"]), "alt": r(b["alt"])} for b in snap["bodies"]],
+                   "satellites": [[x["name"], x["norad"], r(x["az"]), r(x["alt"]), round(x["range_km"]), x["sunlit"]]
+                                  for x in snap["satellites"]],
+                   "planes": None if snap["planes"] is None else
+                   [[p["flight"] or p["hex"].upper(), p["hex"], r(p["az"]), r(p["alt"]), round(p["range_km"], 1),
+                     round(p["alt_ft"]), round(p["speed_kt"]), round(p["track"])] for p in snap["planes"]]}
+        with self._lock:
+            self._moving = (now, doc)
+        return doc
 
     # ---- calibration ---------------------------------------------------------------
 
@@ -195,12 +229,24 @@ class Sky:
             self.apply_preset(name)
             self._preset = name
 
+    def refresh_orbits(self) -> None:
+        if self.model is not None:
+            try:
+                self.model.refresh()
+            except Exception as e:   # offline: the last file (if any) stays in use
+                print(f"satellite orbits not refreshed: {e}", file=sys.stderr, flush=True)
+
     def run_forever(self, stop: threading.Event) -> None:
         try:
             self.switch_preset()
         except Exception as e:
             print(f"preset switch failed: {e}", file=sys.stderr, flush=True)
+        self.refresh_orbits()
+        ticks = 0
         while not stop.wait(CHECK_S):
+            ticks += 1
+            if ticks % 60 == 0:   # hourly look; it downloads only when the file is a day old
+                self.refresh_orbits()
             try:
                 self.switch_preset()
             except Exception as e:

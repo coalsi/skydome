@@ -183,3 +183,20 @@ them and does no harm left in. The all-sky camera is a ZWO ASI676MC on a
     something far away, and on the first clear night press "Calibrate from
     the stars" (it fits the lens and finds north), and set the white
     balance and the night stretch.
+
+## I · The sky watcher (5 min, DECISIONS.md D-030)
+
+27. Tell it where the ADS-B receiver is (this file stays out of git):
+
+    ```bash
+    printf 'adsb_url: http://<receiver address>/tar1090/data/aircraft.json\n' > ~/skydome/var/watch.yaml
+    ```
+
+28. Start it with the dome:
+
+    ```bash
+    sudo cp ~/skydome/systemd/skydome-watch.service /etc/systemd/system/ && sudo systemctl enable --now skydome-watch
+    ```
+
+    `journalctl -u skydome-watch -f` shows each object as it's logged; the
+    web page's Objects tab shows them with pictures.

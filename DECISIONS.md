@@ -956,3 +956,59 @@ its stock lens.
   Bayer pattern and colours, the frame rate at 16 bits over USB 3, the
   stretch numbers. The exposure ladder, settings, presets, raw download
   and star mask are tested without it.
+
+### D-030 · The sky watcher: what should be up there, and everything that moves (owner asked, 2026-11-04)
+The owner wants the Jetson's spare power used to watch the sky: know what
+should be in it at every moment (stars, planets, the Moon, satellites,
+aircraft, meteors), log every object it sees, learn from the owner's
+corrections ("that's a plane, not a bird"), and flag anything unknown.
+* **What should be there** (`skymodel.py`): the planets from JPL's
+  approximate elements and the Moon from the Astronomical Almanac's series
+  (both within ~0.1° of Skyfield/DE421 above the horizon, checked
+  2026-11-04, no ephemeris download); every active satellite from
+  CelesTrak's TLEs (daily, `var/tle/active.tle`) through SGP4, with
+  whether it's sunlit (the ISS matched Skyfield exactly); aircraft from
+  the owner's ADS-B receiver (a tar1090 on the LAN; its address is in
+  `var/watch.yaml`, not in git), moved on to the frame's time.
+* **Labels on the dome:** `/api/sky/moving` (every 2 s on the page): the
+  planets and the Moon with its phase, satellites as cyan diamonds while
+  they're lit and the sky's dark (named unless they're Starlink), aircraft
+  as yellow arrows pointing their way with the callsign; hover or tap for
+  height, range, speed.
+* **Watching** (`skywatch.py`, `tools/run_watch.py`,
+  `systemd/skydome-watch.service`): skydome-live leaves each camera frame
+  (half size, 16-bit, at most 5 a second) in `/dev/shm/skydome-watch`. The
+  watcher subtracts the sky of the last few frames, leaves out the ground
+  mask, the lens's dark edge and the known lights (stars to mag 4 at
+  night, planets, Moon, Sun), and keeps what's 5σ above the noise. A long
+  night frame shows a moving thing as a streak (its line and length);
+  short frames are joined into tracks (a new track may jump 25°/s, a moving
+  one is followed by its speed). A track of points needs 3 frames (noise);
+  a streak counts on its own.
+* **Identifying**, most certain first: follows an ADS-B aircraft (within
+  2.5°, most of its frames; ADS-B's rotorcraft category = helicopter);
+  follows a sunlit satellite (within 1°); else the nearest of the
+  objects the owner has labelled (k = 5 on speed, straightness, size,
+  streak length, brightness, blinking, frames, duration, altitude, day or
+  night; "unknown" if it's far from all of them); with fewer than 5 labels,
+  rules: a lone straight streak at night is a meteor (and its shower if
+  the line runs back to an active radiant), big and slow is cloud, fast
+  and brief by day is a bird. Anything else is **unknown**.
+* **The log** (`var/watch/objects.db`, SQLite; pictures in
+  `var/watch/media/`): time, path, frames, what it is, how the watcher
+  decided and how sure, the flight or satellite, the shower, a thumbnail
+  and an animation. Pictures of identified, unlabelled objects go after 30
+  days; unknown and labelled ones stay.
+* **The Objects tab** on the page: newest first, Unknown/Planes/
+  Satellites/Meteors filters, why each was identified as it was, and "It
+  was …" to correct it (or add a kind of your own); tap one to draw its
+  path on the dome. A correction is an example the watcher relearns from
+  within 15 s.
+* **Alerts:** a POST per unknown object (ntfy-style: title, text, a link
+  to it on the page; at most one per 2 minutes) to `alert_url` in
+  `var/watch.yaml`, once the owner picks where alerts go. Off until then.
+* **Tested** on a simulated sky (an aircraft its ADS-B report identifies, a
+  bird, a meteor, a Leonid's radiant, learning from labels, the log and its
+  pictures, the page on a phone) and the service end to end on simulated
+  frames. **Not yet** on the real camera: the thresholds, the star masks
+  and how well the rules guess all need tuning on real nights.

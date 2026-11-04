@@ -64,6 +64,9 @@ public:
 
     // The next frame's luminance (linear when gamma is 100), 16-bit PGM: base + ".pgm"
     void request_raw(const std::string& base) override;
+    // The sky watcher's feed (D-030): at most max_fps frames a second, half
+    // size, as DIR/<name>.y16 (16-bit luma x256) and DIR/<name>.json
+    void set_tap(const std::string& dir, double max_fps);
     std::string stats_json() const override;
 
 private:
@@ -106,6 +109,7 @@ private:
     int width_ = 0, height_ = 0, bayer_ = 0;
     AutoExposure::Setting shown_{};  // what the newest frame was taken with
     double level_ = 0;               // its sky level
+    double shown_time_ = 0;          // its middle, Unix seconds
     double temperature_c_ = 0;
     bool open_ = false;
 
@@ -124,4 +128,10 @@ private:
     PlanarImage image_{};
     std::string raw_base_;
     bool raw_wanted_ = false;
+    std::string tap_dir_;
+    double tap_period_s_ = 0;
+    Clock::time_point next_tap_{};
+    uint16_t* d_tap_ = nullptr;
+    std::vector<uint16_t> tap_host_;
+    void write_tap(const AutoExposure::Setting& s, double t_mid);
 };

@@ -12,12 +12,14 @@ dependencies = [
     # The web page's API and ONVIF on port 80 (tools/run_server.py, D-021)
     "fastapi>=0.115",
     "uvicorn>=0.30",
+    # Satellites for the sky watcher (skymodel.py, D-030)
+    "sgp4>=2.23",
+    # The sky watcher's image work (skywatch.py, D-030); also lens calibration
+    "opencv-python-headless>=4.8",
 ]
 
 [dependency-groups]
-# Lens calibration (tools/calibrate_intrinsics.py); not needed at runtime
-calib = ["opencv-python-headless>=4.8"]
-dev = ["pytest>=8.0", "httpx>=0.27", { include-group = "calib" }]
+dev = ["pytest>=8.0", "httpx>=0.27"]
 
 [build-system]
 requires = ["hatchling"]
