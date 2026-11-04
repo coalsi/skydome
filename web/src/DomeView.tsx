@@ -57,11 +57,20 @@ export function DomeView({ path }: { path: string }) {
     };
   }, [path]);
 
+  // The video fills the whole area with the square dome centred in it (contain).
+  // Zoomed in, the dome may cover the area: then it can't be dragged off an
+  // edge. While it's still smaller than the area along an axis, it stays centred
   const clamp = useCallback((v: View): View => {
-    const w = frame.current?.clientWidth ?? 0;
+    const W = frame.current?.clientWidth ?? 0;
+    const H = frame.current?.clientHeight ?? 0;
+    const D = Math.min(W, H);
     const s = Math.min(MAX_ZOOM, Math.max(1, v.s));
-    const lo = w - w * s;
-    return { s, x: Math.min(0, Math.max(lo, v.x)), y: Math.min(0, Math.max(lo, v.y)) };
+    const axis = (pos: number, size: number) => {
+      const inset = (s * (size - D)) / 2; // layer edge to dome edge, scaled
+      if (s * D <= size) return (size - s * D) / 2 - inset;
+      return Math.min(-inset, Math.max(size - inset - s * D, pos));
+    };
+    return { s, x: axis(v.x, W), y: axis(v.y, H) };
   }, []);
 
   const zoomAt = (v: View, factor: number, cx: number, cy: number): View => {
@@ -128,12 +137,11 @@ export function DomeView({ path }: { path: string }) {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
   return (
-    // A size container, so the square dome can be as big as fits either way round
-    <div className="relative flex h-full w-full items-center justify-center bg-black" style={{ containerType: "size" }}>
+    <div className="relative h-full w-full bg-black">
       <div
         ref={frame}
-        className="relative aspect-square touch-none overflow-hidden select-none"
-        style={{ width: "min(100cqw, 100cqh)", cursor: view.s > 1 ? "grab" : "zoom-in" }}
+        className="absolute inset-0 touch-none overflow-hidden select-none"
+        style={{ cursor: view.s > 1 ? "grab" : "zoom-in" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

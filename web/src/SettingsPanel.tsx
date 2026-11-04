@@ -91,7 +91,7 @@ export function SettingsPanel() {
       {error && <p className="rounded-md bg-bad/10 px-3 py-2 text-xs text-bad ring-1 ring-bad/30">{error}</p>}
       {GROUPS.map((group) => {
         const items = controls
-          .filter((c) => (META[c.name]?.group ?? "Picture") === group)
+          .filter((c) => META[c.name] && META[c.name].group === group)
           .sort((a, b) => order(a.name) - order(b.name));
         if (!items.length) return null;
         return (
@@ -102,7 +102,7 @@ export function SettingsPanel() {
                 <ControlRow
                   key={c.name}
                   c={c}
-                  meta={META[c.name] ?? { label: c.name.replace(/_/g, " "), group: "Picture" }}
+                  meta={META[c.name]}
                   disabled={!!META[c.name]?.needsOff && !!isOn(META[c.name].needsOff!)}
                   onChange={(v) => change(c.name, v)}
                 />

@@ -148,3 +148,35 @@ def test_system_stats_from_fake_proc(tmp_path):
     assert s.cpu_pct() == 50.0
     assert s.memory() == {"used": 5000 * 1024, "total": 8000 * 1024}
     assert s.wifi_dbm() == -47 and s.uptime() == 123.4
+
+
+def test_only_picture_controls_and_a_refusal_doesnt_block_the_rest(tmp_path):
+    """The cameras also report pan/zoom/privacy, which they refuse to set (EPIPE).
+    Those are never offered, are dropped from the file, and one refused value
+    doesn't stop the others or get retried every few seconds."""
+    from skydome_server.v4l2 import Control
+
+    class Picky(FakeDevice):
+        def controls(self):
+            return {**FALLBACK_CONTROLS, "zoom_absolute": Control(0x009A090D, "zoom_absolute", 100, 400, 1, 100)}
+
+        def set(self, cid, value):
+            if cid == FALLBACK_CONTROLS["contrast"].id:
+                raise OSError(32, "Broken pipe")
+            super().set(cid, value)
+
+    FakeDevice.log = []
+    path = tmp_path / "camera_settings.yaml"
+    path.write_text("brightness: 120\ncontrast: 70\nzoom_absolute: 131\nprivacy: 0\n")
+    logs = []
+    cams = [CameraNode("/dev/video0", ("video0", "2-1.1", "3"))]
+    s = CameraSettings(path, finder=lambda: list(cams), opener=Picky, log=lambda *a, **k: logs.append(a[0]))
+    assert s.values == {"brightness": 120, "contrast": 70}
+    assert "zoom_absolute" not in s.controls()
+    with pytest.raises(ValueError):
+        s.update({"zoom_absolute": 200})
+    s.sync()
+    assert ("/dev/video0", "brightness", 120) in FakeDevice.log           # applied despite contrast failing
+    assert sum("refused contrast" in m for m in logs) == 1
+    s.sync()                                                               # already applied: not retried
+    assert sum("refused contrast" in m for m in logs) == 1

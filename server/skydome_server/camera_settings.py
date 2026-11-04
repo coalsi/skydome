@@ -40,6 +40,11 @@ FALLBACK_CONTROLS = {c.name: c for c in (
     Control(0x009A0902, "exposure_time_absolute", 1, 10000, 1, 156),
 )}
 
+# The picture controls offered for change (web page, ONVIF, the file). The
+# cameras also report pan/tilt/zoom/privacy controls they refuse to set
+# (EPIPE), which a stored value would retry every few seconds forever.
+IMAGE_CONTROLS = frozenset(FALLBACK_CONTROLS)
+
 AUTO_EXPOSURE_MANUAL = 1
 AUTO_EXPOSURE_AUTO = 3   # "aperture priority", the cameras' only automatic mode
 
@@ -62,18 +67,21 @@ class CameraSettings:
         self._controls: dict[str, Control] | None = None
         self._applied: set[tuple] = set()
         self.values: dict[str, int] = {}
+        self._refused: set[tuple[str, str]] = set()   # (device, control) refusals already logged
         if self.path.exists():
             loaded = yaml.safe_load(self.path.read_text()) or {}
-            self.values = {str(k): int(v) for k, v in loaded.items()}
+            self.values = {str(k): int(v) for k, v in loaded.items() if str(k) in IMAGE_CONTROLS}
+            for k in sorted(set(map(str, loaded)) - IMAGE_CONTROLS):
+                self._log(f"camera settings: ignoring {k} in {self.path} (not a picture control)", file=sys.stderr)
 
     def controls(self) -> dict[str, Control]:
-        """The cameras' controls and ranges, read from the first camera found."""
+        """The cameras' picture controls and ranges, read from the first camera found."""
         with self._lock:
             if self._controls is None:
                 for cam in self._find():
                     try:
                         with self._open(cam.device) as d:
-                            self._controls = d.controls()
+                            self._controls = {n: c for n, c in d.controls().items() if n in IMAGE_CONTROLS}
                         break
                     except OSError:
                         continue
@@ -91,11 +99,12 @@ class CameraSettings:
         for name, v in changes.items():
             c = ctrls.get(name)
             if c is None:
-                raise ValueError(f"the cameras have no {name} control")
+                raise ValueError(f"{name} is not one of the cameras' picture controls")
             if not c.minimum <= v <= c.maximum:
                 raise ValueError(f"{name} {v} is outside {c.minimum}..{c.maximum}")
         with self._lock:
             self.values.update(changes)
+            self._refused = {r for r in self._refused if r[1] not in changes}   # a new value: try again
             self._save()
         with self._apply_lock:
             for cam in self._find():
@@ -122,6 +131,7 @@ class CameraSettings:
         with self._lock:
             values = dict(self.values)
         if values:
+            applied = 0
             try:
                 with self._open(cam.device) as d:
                     ctrls = d.controls()
@@ -132,11 +142,20 @@ class CameraSettings:
                         if master and master[0] in ctrls and \
                                 values.get(master[0], ctrls[master[0]].default) != master[1]:
                             continue
-                        d.set(ctrls[name].id, values[name])
+                        try:
+                            d.set(ctrls[name].id, values[name])
+                            applied += 1
+                        except OSError as e:
+                            # This camera refuses this value: the rest still go on, and it
+                            # isn't retried until the camera is replugged or the value changes
+                            if (cam.device, name) not in self._refused:
+                                self._refused.add((cam.device, name))
+                                self._log(f"camera settings: {cam.device} refused {name}={values[name]}: {e}",
+                                          file=sys.stderr)
             except OSError as e:
                 self._log(f"camera settings: {cam.device}: {e}", file=sys.stderr)
-                return   # retried on the next sync
-            self._log(f"camera settings: applied {len(values)} to {cam.device}", file=sys.stderr)
+                return   # couldn't open it: retried on the next sync
+            self._log(f"camera settings: applied {applied} to {cam.device}", file=sys.stderr)
         self._applied.add(cam.key)
 
     def _save(self) -> None:
