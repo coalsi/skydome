@@ -33,6 +33,7 @@
 #include "balance.h"
 #include "lut.h"
 #include "snapshot.h"
+#include "stack.h"
 #include "stitch.h"
 
 namespace {
@@ -55,6 +56,7 @@ struct Options {
     std::string horizon;                   // ground mask file
     std::string raw_dir;                   // raw camera frames on request
     std::string stretch;                   // night stretch file: "black k"
+    std::string stack;                     // stacking depth file: "frames" (0 or 1 = off)
 };
 
 // A request older than this means nobody is zoomed in any more; the zoom
@@ -113,6 +115,7 @@ void usage() {
                  "  --zoom-sink DESC     zoom stream sink (default RTSP to mediamtx /dome-zoom)\n"
                  "  --horizon FILE       ground mask: 360 horizon altitudes; reread when it changes\n"
                  "  --stretch FILE       night stretch \"black k\" (k 0 = off); reread when it changes\n"
+                 "  --stack FILE         stack each camera's last N frames (\"N\"; 0/1 = off); reread when it changes\n"
                  "  --raw-dir DIR        when DIR/request appears, save each camera's next frame as sent\n"
                  "                       (DIR/<camera>.jpg)\n");
 }
@@ -159,6 +162,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--horizon") o.horizon = next();
         else if (a == "--raw-dir") o.raw_dir = next();
         else if (a == "--stretch") o.stretch = next();
+        else if (a == "--stack") o.stack = next();
         else if (a == "-h" || a == "--help") {
             usage();
             std::exit(0);
@@ -286,6 +290,13 @@ int run(int argc, char** argv) {
     // Night stretch
     time_t stretch_mtime = -1;
     float stretch_black = 0.f, stretch_k = 0.f;
+
+    // Stacking (D-026): the stitch reads `views`, each camera's stack when it's on
+    Stacker stacker(static_cast<int>(lut.cams.size()));
+    time_t stack_mtime = -1;
+    int stack_depth = 0;
+    std::vector<uint64_t> stacked_seq(lut.cams.size(), 0);
+    std::vector<PlanarImage> views(lut.cams.size());
     cudaStream_t stream;
     cuda_check(cudaStreamCreate(&stream), "cudaStreamCreate");
 
@@ -335,6 +346,19 @@ int run(int argc, char** argv) {
                     std::fprintf(stderr, "night stretch: black %.0f, k %.1f%s\n", b, k, k > 0.f ? "" : " (off)");
                 }
             }
+            if (!o.stack.empty()) {
+                const time_t m = mtime(o.stack);
+                if (m != stack_mtime) {
+                    stack_mtime = m;
+                    int n = 0;
+                    std::ifstream f(o.stack);
+                    if (!(m && f >> n)) n = 0;
+                    stack_depth = std::max(0, std::min(n, 600));
+                    stacker.reset();   // new depth or new settings: start again
+                    std::fill(stacked_seq.begin(), stacked_seq.end(), 0);
+                    std::fprintf(stderr, "stacking: %d frames%s\n", stack_depth, stack_depth > 1 ? "" : " (off)");
+                }
+            }
             if (!o.raw_dir.empty() && mtime(o.raw_dir + "/request")) {
                 std::remove((o.raw_dir + "/request").c_str());
                 for (auto& c : cams)
@@ -376,6 +400,16 @@ int run(int argc, char** argv) {
             any |= inputs[c].plane[0] != nullptr;
         }
         if (any) {
+            for (size_t c = 0; c < cams.size(); ++c) {
+                views[c] = inputs[c];
+                if (stack_depth < 2 || !inputs[c].plane[0]) continue;
+                const uint64_t seq = cams[c]->frame_seq();
+                if (seq != stacked_seq[c]) {   // a new picture from this camera: blend it in
+                    stacker.add(static_cast<int>(c), inputs[c], stack_depth, stream);
+                    stacked_seq[c] = seq;
+                }
+                views[c] = stacker.view(static_cast<int>(c), inputs[c]);
+            }
             if (balance && now >= next_balance) {
                 // Once a second, a quarter of the way: a few seconds to settle, no flicker
                 if (balance->update(inputs.data(), stream, 0.25f, stretch_k > 0.f ? stretch_black : 0.f)) {
@@ -386,7 +420,7 @@ int run(int argc, char** argv) {
             }
             if (FramePool::Frame* f = pool.acquire()) {
                 const auto t0 = Clock::now();
-                stitcher.run(inputs.data(), f->dev, stream);
+                stitcher.run(views.data(), f->dev, stream);
                 cuda_check(cudaStreamSynchronize(stream), "stitch");
                 const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
                 st.stitch_ms += ms;
@@ -395,7 +429,7 @@ int run(int argc, char** argv) {
                 if (full_snap && full_snap->requested()) {
                     // Rare and slow (~40 ms): only when someone asks
                     FramePool::Frame* ff = full_pool->acquire();
-                    full->run(inputs.data(), ff->dev, stream);
+                    full->run(views.data(), ff->dev, stream);
                     cuda_check(cudaStreamSynchronize(stream), "full-detail stitch");
                     full_snap->take(ff->host, ff->bytes);
                     FramePool::release(ff);
@@ -408,7 +442,7 @@ int run(int argc, char** argv) {
             }
             if (zoom_enc) {
                 if (FramePool::Frame* zf = zoom_pool->acquire()) {
-                    stitcher.run_view(inputs.data(), zf->dev, zoom_view, stream);
+                    stitcher.run_view(views.data(), zf->dev, zoom_view, stream);
                     cuda_check(cudaStreamSynchronize(stream), "zoom stitch");
                     zoom_enc->push(zf);
                 }
@@ -420,7 +454,11 @@ int run(int argc, char** argv) {
                                       ",\"ground_mask\":" + (horizon_on ? "true" : "false") +
                                       ",\"stretch\":{\"black\":" + std::to_string(stretch_black) +
                                       ",\"k\":" + std::to_string(stretch_k) + "}";
-            report(o, cams, enc, balance.get(), extra, st, now);
+            std::string stack_json = ",\"stack\":{\"depth\":" + std::to_string(stack_depth) + ",\"frames\":{";
+            for (size_t c = 0; c < lut.cams.size(); ++c)
+                stack_json += (c ? ",\"" : "\"") + lut.cams[c].name + "\":" + std::to_string(stacker.count(static_cast<int>(c)));
+            stack_json += "}}";
+            report(o, cams, enc, balance.get(), extra + stack_json, st, now);
             next_report = now + std::chrono::seconds(2);
         }
 

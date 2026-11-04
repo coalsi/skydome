@@ -42,7 +42,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import uvicorn  # noqa: E402
 from run_live import (FULL_SNAPSHOT, HORIZON_FILE, MODE_FILE, MODES, RAW_DIR, SNAPSHOT, STATS_FILES,  # noqa: E402
-                      STRETCH_FILE, ZOOM_FILE)
+                      STACK_FILE, STRETCH_FILE, ZOOM_FILE)
 from skydome_pipeline.config import load_modes, load_site  # noqa: E402
 from skydome_server.app import Live, create_app  # noqa: E402
 from skydome_server.camera_settings import CameraSettings  # noqa: E402
@@ -114,7 +114,7 @@ def main() -> int:
     snapshot = SnapshotSource(Path(args.snapshot))
     live_cfg = Live(MODE_FILE, STATS_FILES, zoom_file=Path(ZOOM_FILE), horizon_file=HORIZON_FILE,
                     edge_deg=load_modes(ROOT / "config").dome.edge_zenith_deg, raw_dir=RAW_DIR,
-                    stretch_file=STRETCH_FILE,
+                    stretch_file=STRETCH_FILE, stack_file=STACK_FILE,
                     extra_files=(ROOT / "config" / "cameras.yaml", ROOT / "config" / "calibration" / "extrinsics.yaml"))
     app = create_app(settings, live_cfg,
                      System(ROOT / "var"), snapshot,

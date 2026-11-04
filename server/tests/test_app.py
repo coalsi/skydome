@@ -273,12 +273,12 @@ def test_night_and_day_presets(tmp_path):
     cams = [CameraNode("/dev/video0", ("video0", "2-1.1", "3"))]
     settings = CameraSettings(tmp_path / "s.yaml", finder=lambda: list(cams), opener=FakeDevice, log=lambda *a, **k: None)
     sf = tmp_path / "stretch.txt"
-    lv = Live(tmp_path / "mode.yaml", [], paths=lambda: {}, stretch_file=sf)
+    lv = Live(tmp_path / "mode.yaml", [], paths=lambda: {}, stretch_file=sf, stack_file=tmp_path / "stack.txt")
     client = TestClient(create_app(settings, lv, System(tmp_path), SnapshotSource(tmp_path / "s.jpg")))
     assert client.get("/api/stretch").json() == {"black": 0.0, "k": 0.0}
 
     r = client.post("/api/preset/night").json()
-    assert r["stretch"] == {"black": 34.0, "k": 30.0} and sf.read_text().split() == ["34", "30"]
+    assert r["stretch"] == {"black": 34.0, "k": 45.0} and sf.read_text().split() == ["34", "45"]
     assert settings.values["exposure_dynamic_framerate"] == 1 and settings.values["exposure_time_absolute"] == 10000
     # Long exposure reaches the camera: manual mode first, then the time it allows
     names = [n for _, n, _ in FakeDevice.log]
@@ -289,4 +289,8 @@ def test_night_and_day_presets(tmp_path):
     assert client.post("/api/preset/day").json()["stretch"] == {"black": 0.0, "k": 0.0}
     assert settings.values["auto_exposure"] == 3
     assert client.post("/api/preset/noon").status_code == 404
+    assert (tmp_path / "stack.txt").read_text().strip() == "0"                  # day: no stacking
+    assert client.put("/api/stack", json={"frames": 30}).json() == {"frames": 30}
+    assert client.put("/api/stack", json={"frames": 9999}).status_code == 400
+    assert client.post("/api/preset/night").json()["stack"] == 16
     assert set(PRESETS) == {"night", "day"}

@@ -61,6 +61,7 @@ ZOOM_SIZE = (1600, 1200)                  # the page asks for 4:3 rectangles
 HORIZON_FILE = ROOT / "var" / "horizon.txt"   # ground mask (tools/detect_horizon.py)
 RAW_DIR = Path("/tmp/skydome-raw")         # each camera's frame as sent, on request (the raw download)
 STRETCH_FILE = ROOT / "var" / "stretch.txt"  # night stretch "black k" from the web page (D-025)
+STACK_FILE = ROOT / "var" / "stack.txt"      # stacking depth in frames (D-026)
 # The Jetson's USB-C port often misses a camera that's plugged in at power-on
 # (the zenith camera, 3 cold starts out of 4 on 2026-11-03); switching the
 # port out of host mode and back finds it, like replugging it
@@ -115,7 +116,8 @@ def launch(mode_name: str, devices: dict[str, str], args, extra: list[str]) -> s
            "--sink", f"rtspclientsink location=rtsp://127.0.0.1:8554/{mode['path']} protocols=tcp latency=0",
            "--full-lut", str(lut_path(FULL_SIZE)), "--full-snapshot", FULL_SNAPSHOT,
            "--zoom-file", ZOOM_FILE, "--zoom-size", f"{ZOOM_SIZE[0]}x{ZOOM_SIZE[1]}",
-           "--horizon", str(HORIZON_FILE), "--raw-dir", str(RAW_DIR), "--stretch", str(STRETCH_FILE)]
+           "--horizon", str(HORIZON_FILE), "--raw-dir", str(RAW_DIR), "--stretch", str(STRETCH_FILE),
+           "--stack", str(STACK_FILE)]
     RAW_DIR.mkdir(exist_ok=True)
     for name, dev in devices.items():
         cmd += ["--camera", f"{name}={dev}"]

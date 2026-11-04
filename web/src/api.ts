@@ -84,7 +84,12 @@ export const api = {
     fetch("/api/stretch", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s) })
       .then((r) => json<Stretch>(r)),
   preset: (name: "night" | "day") =>
-    fetch(`/api/preset/${name}`, { method: "POST" }).then((r) => json<{ preset: string; stretch: Stretch }>(r)),
+    fetch(`/api/preset/${name}`, { method: "POST" })
+      .then((r) => json<{ preset: string; stretch: Stretch; stack?: number }>(r)),
+  stack: () => fetch("/api/stack").then((r) => json<{ frames: number }>(r)),
+  setStack: (frames: number) =>
+    fetch("/api/stack", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ frames }) })
+      .then((r) => json<{ frames: number }>(r)),
   setMode: (mode: Mode) =>
     fetch("/api/mode", {
       method: "PUT",

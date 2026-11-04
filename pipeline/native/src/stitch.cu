@@ -22,6 +22,9 @@ struct CamPlanes {
     const uint8_t* a;   // the plane sampled (Y, or U for the chroma pass)
     const uint8_t* b;   // V for the chroma pass, unused for luma
     int pitch;          // shared by a and b
+    const float* fa;    // float planes (a stacked camera) instead of a, b when set
+    const float* fb;
+    int fpitch;
     int w, h;           // plane size
     float sx, sy;       // plane size / table camera size
     float feather;      // in plane pixels
@@ -109,8 +112,9 @@ __global__ void stitch_kernel(Params p) {
         const float d = fminf(fminf(u, cp.w - 1 - u), fminf(v, cp.h - 1 - v));
         const float t = fminf(fmaxf(d / cp.feather, 0.f), 1.f);
         const float w = t * t * (3.f - 2.f * t);
-        float sa = sample(cp.a, cp.pitch, cp.w, cp.h, u, v);
-        float sb = kTwo ? sample(cp.b, cp.pitch, cp.w, cp.h, u, v) : 0.f;
+        float sa = cp.fa ? sample_f(cp.fa, cp.fpitch, cp.w, cp.h, u, v) : sample(cp.a, cp.pitch, cp.w, cp.h, u, v);
+        float sb = !kTwo ? 0.f
+                 : cp.fb ? sample_f(cp.fb, cp.fpitch, cp.w, cp.h, u, v) : sample(cp.b, cp.pitch, cp.w, cp.h, u, v);
         if (kTwo) {
             sa = 128.f + p.gain[c] * (sa - 128.f) + p.off_a[c];
             sb = 128.f + p.gain[c] * (sb - 128.f) + p.off_b[c];
@@ -229,13 +233,15 @@ void GpuStitcher::run_view(const PlanarImage* inputs, const I420Out& out, const 
         if (!im.plane[0]) continue;
         const float sx = static_cast<float>(im.width[0]) / cam_w_[c];
         const float sy = static_cast<float>(im.height[0]) / cam_h_[c];
-        luma.cam[c] = {im.plane[0], nullptr, im.pitch[0], im.width[0], im.height[0], sx, sy, feather_[c] * sx};
+        luma.cam[c] = {im.plane[0], nullptr, im.pitch[0], im.fplane[0], nullptr, im.fpitch[0],
+                       im.width[0], im.height[0], sx, sy, feather_[c] * sx};
         if (im.pitch[1] != im.pitch[2] || im.width[1] != im.width[2] || im.height[1] != im.height[2])
             throw std::runtime_error("U and V planes differ in layout");
         const float csx = static_cast<float>(im.width[1]) / cam_w_[c];
         const float csy = static_cast<float>(im.height[1]) / cam_h_[c];
-        chroma.cam[c] = {im.plane[1], im.plane[2], im.pitch[1], im.width[1], im.height[1], csx, csy,
-                         feather_[c] * csx};
+        if (im.fplane[1] && im.fpitch[1] != im.fpitch[2]) throw std::runtime_error("stacked U and V differ in layout");
+        chroma.cam[c] = {im.plane[1], im.plane[2], im.pitch[1], im.fplane[1], im.fplane[2], im.fpitch[1],
+                         im.width[1], im.height[1], csx, csy, feather_[c] * csx};
     }
     luma.out_div = 1;
     luma.ow = view.width;

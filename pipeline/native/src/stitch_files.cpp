@@ -7,6 +7,7 @@
 //
 // --balance matches brightness and colour between the cameras first
 // (PhotoBalance, as skydome-live does), and prints the corrections.
+// --float hands the stitch float planes, as a stacked camera does (stack.h).
 //
 // Input files are tightly packed planar YUV: y42b (4:2:2) or i420 (4:2:0).
 // Cameras in the table without an --input are treated as missing.
@@ -52,6 +53,7 @@ int run(int argc, char** argv) {
     std::vector<Input> inputs;
     int repeat = 1;
     bool balance = false;
+    bool as_float = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string {
@@ -63,6 +65,7 @@ int run(int argc, char** argv) {
         else if (a == "--input") inputs.push_back(parse_input(next()));
         else if (a == "--repeat") repeat = std::stoi(next());
         else if (a == "--balance") balance = true;
+        else if (a == "--float") as_float = true;
         else throw std::runtime_error("unknown argument " + a);
     }
     if (lut_path.empty()) throw std::runtime_error("--lut is required");
@@ -71,6 +74,7 @@ int run(int argc, char** argv) {
     GpuStitcher st(lut);
     std::vector<PlanarImage> imgs(lut.cams.size());
     std::vector<uint8_t*> owned;
+    std::vector<float*> owned_f;
     for (const Input& in : inputs) {
         const int c = lut.camera_index(in.name);
         if (c < 0) throw std::runtime_error("camera " + in.name + " is not in the table");
@@ -93,6 +97,18 @@ int run(int argc, char** argv) {
         im.height[0] = in.h;
         im.width[1] = im.width[2] = cw;
         im.height[1] = im.height[2] = ch;
+        if (as_float) {
+            const size_t off[3] = {0, ysz, ysz + csz}, n[3] = {ysz, csz, csz};
+            for (int k = 0; k < 3; ++k) {
+                std::vector<float> fl(data.begin() + off[k], data.begin() + off[k] + n[k]);
+                float* fd = nullptr;
+                cuda_check(cudaMalloc(&fd, n[k] * sizeof(float)), "cudaMalloc float input");
+                cuda_check(cudaMemcpy(fd, fl.data(), n[k] * sizeof(float), cudaMemcpyHostToDevice), "upload float");
+                owned_f.push_back(fd);
+                im.fplane[k] = fd;
+                im.fpitch[k] = k ? cw : in.w;
+            }
+        }
     }
 
     const int s = st.size();
@@ -127,6 +143,7 @@ int run(int argc, char** argv) {
                                                          static_cast<std::streamsize>(host.size()));
     }
     for (uint8_t* d : owned) cudaFree(d);
+    for (float* d : owned_f) cudaFree(d);
     cudaFree(d_out);
     cudaStreamDestroy(stream);
     return 0;

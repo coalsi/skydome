@@ -68,6 +68,10 @@ def test_kernel_matches_twin(tmp_path, fmt):
     ys[east] = us[east] = vs[east] = None
 
     gy, gu, gv = run_tool(lut_path, inputs, tmp_path / "out.i420")
+    # A stacked camera hands the stitch float planes: same picture (D-026)
+    fy, fu, fv = run_tool(lut_path, inputs, tmp_path / "outf.i420", ["--float"])
+    for name, a, b in (("Y", gy, fy), ("U", gu, fu), ("V", gv, fv)):
+        assert np.abs(a.astype(int) - b.astype(int)).max() <= 1, f"float {name} differs"
     ry = to_u8(grid_stitch(glut, ys, fill=0))
     ru = to_u8(grid_stitch(glut, us, fill=128, out_div=2))
     rv = to_u8(grid_stitch(glut, vs, fill=128, out_div=2))

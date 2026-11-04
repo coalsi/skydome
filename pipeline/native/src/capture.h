@@ -48,6 +48,8 @@ public:
     // Damaged frames dropped before decoding since the last call (F-010)
     uint64_t take_dropped() { return dropped_.exchange(0); }
     uint64_t restarts() const { return restarts_; }
+    // Counts every new frame (never reset): a change means image() is a new picture
+    uint64_t frame_seq() const { return seq_; }
 
     // Save the next good frame exactly as the camera sent it (MJPEG only) to
     // path: the raw download (D-023). Written to path.tmp, then renamed
@@ -77,6 +79,7 @@ private:
     PlanarImage image_{};
 
     uint64_t frames_ = 0;
+    uint64_t seq_ = 0;
     uint64_t restarts_ = 0;
     std::atomic<uint64_t> dropped_{0};     // written from the streaming thread
     std::string raw_path_;                 // set before raw_wanted_

@@ -222,6 +222,7 @@ void CameraSource::poll(Clock::time_point now) {
         }
         if (newest && hold(newest)) {
             ++frames_;
+            ++seq_;
             last_frame_ = now;
         }
         const bool stale = held_ ? now - last_frame_ > kStaleAfter : now - started_ > kFirstFrameTimeout;

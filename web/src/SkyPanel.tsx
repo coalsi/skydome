@@ -4,12 +4,15 @@ import { api, type Stretch } from "./api";
 // Night / Day in one click, and the night stretch that lifts faint stars (D-025)
 export function SkyPanel() {
   const [stretch, setStretch] = useState<Stretch | null>(null);
+  const [stack, setStack] = useState<number | null>(null);
+  const stackTimer = useRef<number>();
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const timer = useRef<number>();
 
   useEffect(() => {
     api.stretch().then(setStretch).catch(() => {});
+    api.stack().then((s) => setStack(s.frames)).catch(() => {});
   }, []);
 
   const preset = (name: "night" | "day") => {
@@ -19,9 +22,10 @@ export function SkyPanel() {
       .preset(name)
       .then((r) => {
         setStretch(r.stretch);
+        if (r.stack !== undefined) setStack(r.stack);
         setNote(name === "night"
-          ? "Night: 1 s exposures (the sky updates once a second), full gain, stars lifted."
-          : "Day: the cameras' automatic exposure, no stretch.");
+          ? "Night: 1 s exposures stacked over 16 s, full gain, stars lifted. Give it ~16 s to build up."
+          : "Day: the cameras' automatic exposure, no stacking or stretch.");
       })
       .catch((e) => setNote(String(e.message ?? e)))
       .finally(() => setBusy(null));
@@ -49,6 +53,15 @@ export function SkyPanel() {
       {note && <p className="mt-2 text-xs leading-relaxed text-muted">{note}</p>}
       {stretch && (
         <div className="mt-3 space-y-2">
+          {stack !== null && (
+            <Slider label="Stacking" value={stack} min={0} max={60} step={1}
+              fmt={(v) => (v < 2 ? "off" : `${v} frames`)}
+              onChange={(v) => {
+                setStack(v);
+                window.clearTimeout(stackTimer.current);
+                stackTimer.current = window.setTimeout(() => api.setStack(v).catch(() => {}), 400);
+              }} />
+          )}
           <Slider label="Star stretch" value={stretch.k} min={0} max={40} step={1}
             fmt={(v) => (v === 0 ? "off" : `${v}`)} onChange={(k) => change({ ...stretch, k })} />
           <Slider label="Black point" value={stretch.black} min={0} max={80} step={1} disabled={stretch.k === 0}

@@ -46,10 +46,13 @@ ZOOM_PATH = "dome-zoom"   # what the page is zoomed into, at the cameras' sharpn
 PRESETS = {
     "night": {"camera": {"auto_exposure": 1, "exposure_dynamic_framerate": 1, "exposure_time_absolute": 10000,
                          "gain": 190, "backlight_compensation": 0, "saturation": 60},
-              "stretch": {"black": 34, "k": 30}},   # tuned on the rig 2026-11-03: most clear stars before noise
+              # Tuned on the rig 2026-11-03: with the stack's lower noise, k 45 shows the most
+              # clear (6σ) stars; k 60 only lifts the background
+              "stretch": {"black": 34, "k": 45},
+              "stack": 16},                          # 16 s of light; stars drift ~2 px in that (D-026)
     "day": {"camera": {"auto_exposure": 3, "exposure_dynamic_framerate": 0, "gain": 140,
                        "backlight_compensation": 48, "saturation": 100},
-            "stretch": {"black": 0, "k": 0}},
+            "stretch": {"black": 0, "k": 0}, "stack": 0},
 }
 
 
@@ -65,6 +68,7 @@ class Live:
     horizon_file: Path | None = None   # ground mask (D-024): on while this file exists
     raw_dir: Path | None = None        # skydome-live saves camera frames here on request (D-023)
     stretch_file: Path | None = None   # night stretch "black k" (D-025)
+    stack_file: Path | None = None     # stacking depth in frames (D-026)
     extra_files: tuple[Path, ...] = ()  # put in the raw download for reference (alignment, cameras)
     edge_deg: float = 100.0            # zenith angle at the dome's edge (config/modes.yaml, D-018)
     paths: Callable[[], dict | None] | None = field(default=None, repr=False)   # tests replace mediamtx
@@ -178,6 +182,34 @@ def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapsho
         tmp.replace(live_cfg.stretch_file)
         return read_stretch()
 
+    def read_stack() -> int:
+        try:
+            return int(live_cfg.stack_file.read_text().split()[0])
+        except (AttributeError, OSError, ValueError, IndexError):
+            return 0
+
+    def write_stack(frames: int) -> int:
+        """Rewritten even when unchanged: skydome-live starts the stack again
+        on every write, so frames from other settings don't mix in."""
+        if not live_cfg.stack_file:
+            raise HTTPException(404, "stacking isn't set up")
+        if not 0 <= frames <= 600:
+            raise HTTPException(400, "want 0..600 frames")
+        tmp = live_cfg.stack_file.with_name(live_cfg.stack_file.name + ".tmp")
+        tmp.write_text(f"{frames}\n")
+        tmp.replace(live_cfg.stack_file)
+        return read_stack()
+
+    @app.get("/api/stack")
+    def get_stack() -> dict:
+        return {"frames": read_stack()}
+
+    @app.put("/api/stack")
+    def put_stack(frames: int = Body(..., embed=True)) -> dict:
+        """Stack each camera's last `frames` frames (0 or 1 = off). With 1 s
+        exposures that's seconds of light; noise falls with its square root."""
+        return {"frames": write_stack(frames)}
+
     @app.get("/api/stretch")
     def get_stretch() -> dict:
         return read_stretch()
@@ -198,7 +230,10 @@ def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapsho
             settings.update({k: v for k, v in p["camera"].items() if k in ctrls})
         except ValueError as e:
             raise HTTPException(400, str(e))
-        return {"preset": name, "stretch": write_stretch(**p["stretch"])}
+        out = {"preset": name, "stretch": write_stretch(**p["stretch"])}
+        if live_cfg.stack_file:
+            out["stack"] = write_stack(p["stack"])   # also restarts the stack on the new settings
+        return out
 
     # ---- zoom (D-023) --------------------------------------------------------------
 

@@ -20,6 +20,7 @@ Five-camera all-sky observatory on a Jetson Orin Nano Super. Start with
 | Brightness/colour matching between cameras in the stitch (D-022) | working: live, ~1 ms a second |
 | Detail 5120² live; full-sharpness zoom, 6656² stills and raw camera frames (D-023) | working |
 | Ground mask: hide houses and trees, auto-detected and editable on the page (D-024) | working |
+| Night: 1 s exposures, live stacking, star stretch, Night/Day presets (D-025, D-026) | working |
 | Shared exposure control, vignetting, recording, astro, the rest of the planetarium console | not started |
 
 ## Layout

@@ -724,6 +724,30 @@ Measured on the rig the first dark evening (light-polluted, some cloud):
 * **Not yet:** stacking frames (handoff's Night/Deep modes) and switching
   presets by sun altitude (D-015 Auto).
 
+### D-026 · Live stacking (owner asked, 2026-11-03)
+Goal (owner): see the sky in detail and find objects; 10 fps, 1 fps or
+less is fine. The cameras stop at 1 s per frame, so more light means
+averaging frames.
+* **Per camera, before stitching** (`pipeline/native/src/stack.cu`): each
+  new frame (at 1 fps) is blended into float planes at full camera
+  resolution, the exact mean until N frames, then a running average of
+  about N. The stitch reads the floats, so the precision the stack gains
+  reaches the stretch instead of being rounded to 8 bits; zoom, stills
+  and the NVR stream all get the stacked sky. Camera matching (D-022)
+  still measures the raw frames. ~330 MB of GPU memory for five cameras.
+* **Depth** in `var/stack.txt` (`/api/stack`, slider on the page;
+  0/1 = off), reread within a second; every write starts the stack again,
+  so a preset switch never mixes day and night frames. Night = 16 frames:
+  stars drift ~0.25°/min (~2 camera pixels in 16 s), so they stay points;
+  much deeper needs derotating to the stars (alignment, Phase 2).
+* **Measured on the rig** (light-polluted, some cloud): background noise
+  after the stretch fell 1.5-2x with 16 frames (not the ideal 4x: the
+  cameras' JPEG and noise reduction make their noise partly the same from
+  frame to frame), which let the stretch go from k 30 to 45. Planes and
+  satellites leave dotted trails.
+* **Next:** dark frames (hot pixels add up in a stack), derotation for
+  minutes-long stacks, Auto night/day by the sun.
+
 ---
 
 ## Open questions (handoff §8)

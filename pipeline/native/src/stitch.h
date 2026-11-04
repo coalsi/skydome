@@ -17,6 +17,10 @@ struct PlanarImage {
     int pitch[3] = {0, 0, 0};
     int width[3] = {0, 0, 0};
     int height[3] = {0, 0, 0};
+    // A stacked camera (stack.h): the same planes as floats, which the stitch
+    // reads instead when set, so the stack's extra precision reaches the stretch
+    const float* fplane[3] = {nullptr, nullptr, nullptr};
+    int fpitch[3] = {0, 0, 0};   // in elements
 };
 
 // I420 output: Y is width x height, U and V half that each way, tightly packed.
