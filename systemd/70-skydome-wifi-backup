@@ -1,0 +1,18 @@
+#!/bin/sh
+# SkyDome: Wi-Fi is only the backup for Ethernet. NetworkManager runs this on
+# every interface change. With a wired link up, the Wi-Fi radio goes off, so
+# the rig's address and all its traffic stay on the cable (a 5120² dome is
+# ~28 Mb/s per viewer; the garden Wi-Fi carried 17-24). When the wired link
+# goes down (cable out, switch off), Wi-Fi comes back on by itself.
+#
+#   sudo install -m 755 systemd/70-skydome-wifi-backup /etc/NetworkManager/dispatcher.d/
+IFACE="$1"
+ACTION="$2"
+case "$IFACE" in
+    en*|eth*) ;;
+    *) exit 0 ;;
+esac
+case "$ACTION" in
+    up) nmcli radio wifi off ;;
+    down) nmcli radio wifi on ;;
+esac
