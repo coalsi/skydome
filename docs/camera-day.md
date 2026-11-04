@@ -25,13 +25,13 @@ tweak before printing.
 
 ## 2 · Plug in (F-010; no USB hub) and check focus (15 min)
 
-| Camera | Plug into | ID_PATH (as wired 2026-11-03) |
+| Camera | Plug into | ID_PATH (as wired; directions corrected 2026-11-03 night) |
 |---|---|---|
 | zenith | Jetson USB-C | `platform-3610000.usb-usb-0:2:1.0` |
-| north | Jetson USB-A | `platform-3610000.usb-usb-0:1.2:1.0` |
-| east | Jetson USB-A | `platform-3610000.usb-usb-0:1.1:1.0` |
-| south | Jetson USB-A | `platform-3610000.usb-usb-0:1.3:1.0` |
-| west | Jetson USB-A | `platform-3610000.usb-usb-0:1.4:1.0` |
+| north | Jetson USB-A | `platform-3610000.usb-usb-0:1.4:1.0` |
+| east | Jetson USB-A | `platform-3610000.usb-usb-0:1.2:1.0` |
+| south | Jetson USB-A | `platform-3610000.usb-usb-0:1.1:1.0` |
+| west | Jetson USB-A | `platform-3610000.usb-usb-0:1.3:1.0` |
 
 All five link at 5000M with the USB LPM quirk (F-010). Then, on a bench or a table, point
 each camera out a window at something far away and check focus in step 3's
