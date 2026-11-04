@@ -56,8 +56,52 @@ export interface Control {
   set: boolean;
 }
 
+// A star up now: name (proper name, else designation), designation, constellation, magnitude, azimuth, altitude
+export type StarRow = [string, string, string, number, number, number];
+
+export interface Sky {
+  utc: string;
+  sun_alt: number;
+  catalogue: boolean;
+  stars: StarRow[];
+}
+
+export interface CameraFit {
+  stars: number;
+  rms_px: number | null;
+  az_deg: number;
+  alt_deg: number;
+  moved_deg: number;
+  own: boolean;
+  lens: boolean;
+}
+
+export interface Calibration {
+  state: "never" | "running" | "done" | "failed";
+  message?: string;
+  started_utc?: string;
+  utc?: string;
+  why?: string;
+  applied?: boolean;
+  anchor?: string;
+  heading_deg?: number;
+  tilt_deg?: number;
+  stars?: number;
+  cameras?: Record<string, CameraFit>;
+  auto: boolean;
+  sun_alt: number;
+  dark_enough: boolean;
+}
+
 async function json<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error((await r.text()) || `${r.status}`);
+  if (!r.ok) {
+    const text = await r.text();
+    let detail = text;
+    try {
+      detail = JSON.parse(text).detail ?? text;   // FastAPI's {"detail": "..."}
+    } catch { /* plain text */ }
+    throw new Error(detail || `${r.status}`);
+  }
   return r.json();
 }
 
@@ -90,6 +134,12 @@ export const api = {
   setStack: (frames: number) =>
     fetch("/api/stack", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ frames }) })
       .then((r) => json<{ frames: number }>(r)),
+  sky: (maxMag = 5.5) => fetch(`/api/sky?max_mag=${maxMag}`).then((r) => json<Sky>(r)),
+  calibration: () => fetch("/api/calibration").then((r) => json<Calibration>(r)),
+  calibrate: () => fetch("/api/calibration", { method: "POST" }).then((r) => json<Calibration>(r)),
+  setCalibrationAuto: (auto: boolean) =>
+    fetch("/api/calibration", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto }) })
+      .then((r) => json<Calibration>(r)),
   setMode: (mode: Mode) =>
     fetch("/api/mode", {
       method: "PUT",

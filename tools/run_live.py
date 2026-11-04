@@ -24,7 +24,8 @@ Cameras are found as /dev/skycam-<name> (udev rules from
 tools/gen_udev_rules.py), else by the id_path in config/cameras.yaml, else
 from --camera NAME=DEVICE. A camera with an id_path that isn't plugged in
 yet is waited for: skydome-live picks it up when it appears. Rebuilds
-var/stitch_<size>.lut when the camera config or a lens calibration is newer.
+var/stitch_<size>.lut when the camera config or a lens calibration is newer,
+at start and while running (a new alignment from the stars, D-028).
 Stills for ONVIF's GetSnapshotUri go to --snapshot when asked for
 (tools/run_server.py). Runs jetson_clocks
 while it's up (D-014) if sudo allows it without a password, and restores
@@ -67,6 +68,7 @@ STACK_FILE = ROOT / "var" / "stack.txt"      # stacking depth in frames (D-026)
 # port out of host mode and back finds it, like replugging it
 USB_ROLE = sorted(Path("/sys/class/usb_role").glob("*-role-switch"))
 KICK_AFTER_S, KICK_EVERY_S, KICKS = 20, 120, 3
+STALE_SETTLE_S = 5   # a calibration is several files: wait for the last before rebuilding
 MODE_FILE = ROOT / "var" / "live_mode.yaml"   # written by the web page (skydome_server/live.py)
 # Stats: the service's file, then the default when run by hand (the server reads the newest)
 STATS_FILES = [Path("/run/skydome/live.json"), Path("/tmp/skydome-live.json")]
@@ -183,7 +185,7 @@ def main() -> int:
     try:
         current = wanted()
         proc = launch(current, devices, args, extra)
-        started, kicks = time.monotonic(), 0
+        started, kicks, stale_since = time.monotonic(), 0, None
         while not quit_.wait(1.0):
             missing = [n for n, d in devices.items() if not Path(d).exists()]
             if missing and kicks < KICKS and time.monotonic() - started > KICK_AFTER_S + kicks * KICK_EVERY_S:
@@ -198,6 +200,16 @@ def main() -> int:
                 stop(proc)
                 current = wanted()
                 proc = launch(current, devices, args, extra)
+            # A new alignment (the stars, D-028): rebuild the tables once the files have settled
+            if is_stale(MODES[current]["size"]) or is_stale(FULL_SIZE):
+                stale_since = stale_since or time.monotonic()
+                if time.monotonic() - stale_since > STALE_SETTLE_S:
+                    print("calibration changed: rebuilding the stitch tables", flush=True)
+                    stop(proc)
+                    proc = launch(current, devices, args, extra)
+                    stale_since = None
+            else:
+                stale_since = None
         return stop(proc)
     finally:
         if clocks:

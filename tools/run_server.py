@@ -7,7 +7,9 @@ its API, and ONVIF for NVRs, in one process.
     uv run --project pipeline tools/run_server.py --set-password
 
 http://skydome.local shows the live dome with its camera settings, the
-Detail/Smooth switch and the rig's health (web/, built into web/dist). API
+Detail/Smooth switch and the rig's health (web/, built into web/dist),
+a compass and star names. After dark it calibrates the rig from the stars
+by itself (skydome_server/sky.py, D-028). API
 docs at http://skydome.local/api/docs.
 
 NVRs find it by WS-Discovery (or add http://skydome.local/onvif/device_service
@@ -45,6 +47,7 @@ from run_live import (FULL_SNAPSHOT, HORIZON_FILE, MODE_FILE, MODES, RAW_DIR, SN
                       STACK_FILE, STRETCH_FILE, ZOOM_FILE)
 from skydome_pipeline.config import load_modes, load_site  # noqa: E402
 from skydome_server.app import Live, create_app  # noqa: E402
+from skydome_server.sky import Sky  # noqa: E402
 from skydome_server.camera_settings import CameraSettings  # noqa: E402
 from skydome_server.net import interfaces  # noqa: E402
 from skydome_server.onvif.discovery import Discovery  # noqa: E402
@@ -116,15 +119,22 @@ def main() -> int:
                     edge_deg=load_modes(ROOT / "config").dome.edge_zenith_deg, raw_dir=RAW_DIR,
                     stretch_file=STRETCH_FILE, stack_file=STACK_FILE,
                     extra_files=(ROOT / "config" / "cameras.yaml", ROOT / "config" / "calibration" / "extrinsics.yaml"))
+    site = load_site(ROOT / "config")
+    calibration = ROOT / "var" / "calibration.json"
+    sky = Sky(ROOT / "var" / "bsc5.dat", site.latitude_deg, site.longitude_deg, calibration,
+              ROOT / "var" / "calibration.auto",
+              [sys.executable, str(ROOT / "tools" / "align_from_stars.py"), "--save", "--status", str(calibration),
+               "--url", f"http://127.0.0.1:{args.port}/api/raw.zip"])
     app = create_app(settings, live_cfg,
                      System(ROOT / "var"), snapshot,
                      onvif=OnvifEndpoint(services, UsernameTokenAuth(users), log=log), web_dir=WEB_DIST,
-                     full=SnapshotSource(Path(FULL_SNAPSHOT), timeout=10, fresh=2))
+                     full=SnapshotSource(Path(FULL_SNAPSHOT), timeout=10, fresh=2), sky=sky)
     if not (WEB_DIST / "index.html").exists():
         log(f"{WEB_DIST} not built: the page says so; the API and ONVIF work")
 
     stop = threading.Event()
-    threads = [threading.Thread(target=settings.watch, args=(stop,), daemon=True)]
+    threads = [threading.Thread(target=settings.watch, args=(stop,), daemon=True),
+               threading.Thread(target=sky.run_forever, args=(stop,), daemon=True)]
     if not args.no_discovery:
         port = args.port
         disc = Discovery(ident.uuid, ident.scopes(), lambda ip: f"http://{ip}:{port}/onvif/device_service", log=log)

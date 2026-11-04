@@ -7,7 +7,7 @@ import numpy as np
 from skydome_pipeline.camera import Camera, FisheyeLens
 from skydome_pipeline.geometry import camera_rotation, rot_x, rot_z
 from skydome_pipeline.stars import (Catalogue, Detections, _precession, apparent_altaz, julian_date,
-                                    refraction_deg, solve_camera)
+                                    refraction_deg, solve_camera, solve_rig, sun_altaz)
 
 POLARIS = Catalogue(np.array([37.95456]), np.array([89.26411]), np.array([1.97]))   # J2000
 
@@ -82,3 +82,36 @@ def test_solve_finds_a_camera_turned_a_quarter_turn():
     tu, tv, _ = truth.world_to_pixel(dirs[keep])
     gu, gv, _ = sol.camera.world_to_pixel(dirs[keep])
     assert np.max(np.hypot(tu - gu, tv - gv)) < 2.0
+
+
+def test_rig_turned_and_tipped_is_found_and_a_clouded_camera_turns_with_it():
+    rng = np.random.default_rng(11)
+    n = 1500
+    z = rng.uniform(-0.1, 1, n)
+    phi = rng.uniform(0, 2 * np.pi, n)
+    dirs = np.stack([np.sqrt(1 - z**2) * np.cos(phi), np.sqrt(1 - z**2) * np.sin(phi), z], axis=-1)
+    mags = rng.uniform(1, 6, n)
+    lens = FisheyeLens.from_hfov(3840, 2160, 116.0)
+    config = [Camera("zenith", lens, camera_rotation(0, 90, 0)), Camera("north", lens, camera_rotation(0, 30, 0)),
+              Camera("south", lens, camera_rotation(180, 30, 0))]
+    moved = rot_x(1.0) @ rot_z(-40.0)                  # set down turned 40° clockwise and tipped 1°
+    truth = [Camera(c.name, c.lens, moved @ c.rotation) for c in config]
+    dets = {}
+    for c in truth[:2]:                                # south sees no stars (cloud)
+        u, v, ok = c.world_to_pixel(dirs, margin=15)
+        keep = ok & (mags < 5.0)
+        dets[c.name] = Detections(u[keep] + rng.normal(0, 0.3, keep.sum()), v[keep] + rng.normal(0, 0.3, keep.sum()),
+                                  10 ** (-0.4 * mags[keep]) * 1e4, np.full(keep.sum(), 20.0))
+    dets["south"] = Detections(np.array([]), np.array([]), np.array([]), np.array([]))
+    rig = solve_rig(config, dets, dirs, mags)
+    assert rig is not None and set(rig.own) == {"zenith", "north"}
+    for c in truth:                                    # every camera, the clouded one too, points where it really does
+        got = rig.cameras[c.name].rotation
+        assert np.degrees(np.arccos(np.clip((np.trace(got.T @ c.rotation) - 1) / 2, -1, 1))) < 0.05
+
+
+def test_sun_is_up_at_noon_and_down_at_night_in_arizona():
+    _, noon = sun_altaz(33.63, -112.37, datetime(2026, 6, 21, 19, 30, tzinfo=timezone.utc))
+    _, night = sun_altaz(33.63, -112.37, datetime(2026, 6, 22, 7, 0, tzinfo=timezone.utc))
+    assert 78 < noon < 80.5            # 90 - 33.63 + 23.44 at the solstice, near local noon
+    assert night < -20

@@ -22,6 +22,7 @@ Five-camera all-sky observatory on a Jetson Orin Nano Super. Start with
 | Ground mask: hide houses and trees, auto-detected and editable on the page (D-024) | working |
 | Night: 1 s exposures, live stacking, star stretch, Night/Day presets (D-025, D-026) | working |
 | Alignment and lenses solved from the stars (`tools/align_from_stars.py`, D-027) | working: all five cameras, seams ~1 dome pixel |
+| Compass and star names on the page; calibrates itself from the stars each night, wherever it's set up (D-028) | working |
 | Shared exposure control, vignetting, recording, astro, the rest of the planetarium console | not started |
 
 ## Layout

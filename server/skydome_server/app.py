@@ -2,7 +2,8 @@
 
     /               the web page (web/dist, built from web/)
     /api/...        status, camera settings, Detail/Smooth, snapshot, full-detail
-                    still, zoom requests, ground mask
+                    still, zoom requests, ground mask, the stars and calibrating
+                    from them
     /api/webrtc/... mediamtx's WHEP, so the page plays the dome from its own
                     address (the video itself still flows straight from mediamtx)
     /onvif/...      ONVIF for NVRs (D-020)
@@ -31,6 +32,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import live
 from .camera_settings import CameraSettings
+from .sky import BUTTON_SUN_ALT, Sky
 from .onvif.http import OnvifEndpoint, SnapshotSource
 from .system import System
 
@@ -92,7 +94,7 @@ class Live:
 
 def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapshot: SnapshotSource,
                onvif: OnvifEndpoint | None = None, web_dir: Path | None = None,
-               full: SnapshotSource | None = None) -> FastAPI:
+               full: SnapshotSource | None = None, sky: Sky | None = None) -> FastAPI:
     app = FastAPI(title="SkyDome", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
 
     # ---- status ------------------------------------------------------------------
@@ -255,6 +257,38 @@ def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapsho
         tmp.write_text(f"{x0:.6f} {y0:.6f} {x1:.6f} {y1:.6f}\n")
         tmp.replace(live_cfg.zoom_file)
         return {"path": ZOOM_PATH}
+
+    # ---- the stars: names, and calibrating the rig from them (D-028) -----------------
+
+    def need_sky() -> Sky:
+        if sky is None:
+            raise HTTPException(404, "no star catalogue set up")
+        return sky
+
+    @app.get("/api/sky")
+    def get_sky(max_mag: float = 5.5) -> dict:
+        """Stars up now with their names: rows of [name, designation, constellation, mag, az, alt]."""
+        return need_sky().stars(min(max(max_mag, 0.0), 6.5))
+
+    @app.get("/api/calibration")
+    def get_calibration() -> dict:
+        return need_sky().status()
+
+    @app.post("/api/calibration")
+    def calibrate() -> dict:
+        s = need_sky()
+        sun = s.sun_alt()
+        if sun > BUTTON_SUN_ALT:
+            raise HTTPException(409, f"needs a dark sky: the Sun is at {sun:.0f}° (wait until it's {BUTTON_SUN_ALT:.0f}°)")
+        if not s.start("asked from the page", min_move=0.0):
+            raise HTTPException(409, "already calibrating")
+        return s.status()
+
+    @app.put("/api/calibration")
+    def set_calibration(auto: bool = Body(..., embed=True)) -> dict:
+        s = need_sky()
+        s.set_auto(auto)
+        return s.status()
 
     # ---- ground mask (D-024) ---------------------------------------------------------
 

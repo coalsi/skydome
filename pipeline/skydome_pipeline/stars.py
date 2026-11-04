@@ -32,6 +32,8 @@ class Catalogue:
     ra_deg: np.ndarray    # J2000
     dec_deg: np.ndarray
     vmag: np.ndarray
+    hr: np.ndarray | None = None          # Harvard Revised number
+    names: tuple[str, ...] = ()           # BSC5 columns 5-14 ("  3Alp Lyr"; star_names.describe)
 
 
 def load_bsc(cache: Path) -> Catalogue:
@@ -52,7 +54,7 @@ def load_bsc(cache: Path) -> Catalogue:
 
 
 def parse_bsc(text: str) -> Catalogue:
-    ra, dec, mag = [], [], []
+    ra, dec, mag, hr, names = [], [], [], [], []
     for line in text.splitlines():
         if len(line) < 107 or not line[75:77].strip() or not line[102:107].strip():
             continue   # a few entries (novae, clusters) have no position or magnitude
@@ -62,7 +64,9 @@ def parse_bsc(text: str) -> Catalogue:
         ra.append(15.0 * (h + m / 60 + s / 3600))
         dec.append(sign * (dd + dm / 60 + ds / 3600))
         mag.append(float(line[102:107]))
-    return Catalogue(np.array(ra), np.array(dec), np.array(mag))
+        hr.append(int(line[0:4]))
+        names.append(line[4:14])
+    return Catalogue(np.array(ra), np.array(dec), np.array(mag), np.array(hr), tuple(names))
 
 
 # ---- apparent positions ---------------------------------------------------------
@@ -102,6 +106,28 @@ def apparent_altaz(cat: Catalogue, lat_deg: float, lon_deg: float, t: datetime) 
     v = np.stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)], axis=-1) @ _precession(jd).T
     ra_d = np.arctan2(v[:, 1], v[:, 0])
     dec_d = np.arcsin(np.clip(v[:, 2], -1, 1))
+    az, alt = _altaz_of_date(ra_d, dec_d, lat_deg, lon_deg, jd)
+    return az, alt + refraction_deg(alt)
+
+
+def sun_altaz(lat_deg: float, lon_deg: float, t: datetime) -> tuple[float, float]:
+    """The Sun's azimuth and altitude (no refraction), to ~0.01°: enough to
+    tell day, twilight and night apart (Astronomical Almanac low-precision
+    formulae)."""
+    jd = julian_date(t)
+    n = jd - 2451545.0
+    L = np.radians((280.460 + 0.9856474 * n) % 360)
+    g = np.radians((357.528 + 0.9856003 * n) % 360)
+    lam = L + np.radians(1.915) * np.sin(g) + np.radians(0.020) * np.sin(2 * g)
+    eps = np.radians(23.439 - 0.0000004 * n)
+    ra = np.arctan2(np.cos(eps) * np.sin(lam), np.cos(lam))
+    dec = np.arcsin(np.sin(eps) * np.sin(lam))
+    az, alt = _altaz_of_date(np.array([ra]), np.array([dec]), lat_deg, lon_deg, jd)
+    return float(az[0]), float(alt[0])
+
+
+def _altaz_of_date(ra_d: np.ndarray, dec_d: np.ndarray, lat_deg: float, lon_deg: float, jd: float):
+    """Right ascension / declination of date (radians) -> azimuth, altitude (degrees, unrefracted)."""
     T = (jd - 2451545.0) / 36525.0
     gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T**2
     H = np.radians(gmst + lon_deg) - ra_d
@@ -109,7 +135,7 @@ def apparent_altaz(cat: Catalogue, lat_deg: float, lon_deg: float, t: datetime) 
     alt = np.degrees(np.arcsin(np.sin(phi) * np.sin(dec_d) + np.cos(phi) * np.cos(dec_d) * np.cos(H)))
     az = np.degrees(np.arctan2(-np.cos(dec_d) * np.sin(H),
                                np.sin(dec_d) * np.cos(phi) - np.cos(dec_d) * np.cos(H) * np.sin(phi))) % 360
-    return az, alt + refraction_deg(alt)
+    return az, alt
 
 
 # ---- stars in a frame -----------------------------------------------------------
@@ -369,6 +395,55 @@ def solve_camera(cam: Camera, det: Detections, star_dirs: np.ndarray, star_mag: 
     if start is not None:
         sol = better(sol, refine_camera(start, det, star_dirs, star_mag))
     return sol if sol is not None and sol.matches >= 10 else None
+
+
+@dataclass
+class RigSolution:
+    """The rig as found in the sky: each camera's camera (pointing + lens)
+    and how it was found."""
+    cameras: dict[str, Camera]
+    own: dict[str, Solution]   # cameras whose own stars fitted them
+    turn: np.ndarray           # world-from-world rotation: configured rig -> real rig
+    anchor: str                # the camera that found the rig
+
+
+def solve_rig(cams: list[Camera], dets: dict[str, Detections], star_dirs: np.ndarray, star_mag: np.ndarray,
+              good: int = 30, min_own: int = 15) -> RigSolution | None:
+    """The whole rig at once, for a rig that has been moved or turned: the
+    camera with the most stars is solved (blind if need be), which says how
+    the rig turned; every other camera starts from its configured place on
+    the rig turned the same way and is refined on its own stars. A camera
+    that doesn't fit there (moved on the rig, a new lens) is solved blind;
+    one with too few stars (cloud, trees) just turns with the rig."""
+    order = sorted(cams, key=lambda c: -len(dets[c.name].u) if c.name in dets else 0)
+    own: dict[str, Solution] = {}
+    turn = anchor = None
+    for c in order:
+        if c.name not in dets:
+            continue
+        s = solve_camera(c, dets[c.name], star_dirs, star_mag, good)
+        if s is not None and s.matches >= good and s.rms_px < 1.5:
+            turn, anchor = s.camera.rotation @ c.rotation.T, c.name
+            own[c.name] = s
+            break
+    if turn is None:
+        return None
+    out = {}
+    for c in cams:
+        if c.name in own:
+            out[c.name] = own[c.name].camera
+            continue
+        seed = Camera(c.name, c.lens, turn @ c.rotation)
+        out[c.name] = seed
+        if c.name not in dets:
+            continue
+        s = refine_camera(seed, dets[c.name], star_dirs, star_mag)
+        if s is None or s.matches < min_own or s.rms_px >= 1.5:
+            s = solve_camera(seed, dets[c.name], star_dirs, star_mag, good)
+        if s is not None and s.matches >= min_own and s.rms_px < 1.5:
+            own[c.name] = s
+            out[c.name] = s.camera
+    return RigSolution(out, own, turn, anchor)
 
 
 def star_directions(cat: Catalogue, lat: float, lon: float, t: datetime, min_alt: float = 8.0,

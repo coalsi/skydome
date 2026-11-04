@@ -858,3 +858,40 @@ now solves every camera from the night sky, on the rig, in ~5 minutes:
   alignment), re-solve after moving a camera, derotation for long stacks.
 
 ---
+
+### D-028 · Compass, star names, and calibrating from the stars wherever it's set up (owner asked, 2026-11-04)
+The rig won't always stand in one place: each time it's set up the dome
+should find north and the stars by itself, from the view.
+* **Whole rig, not five cameras:** `solve_rig` (stars.py) solves the camera
+  with the most stars (blind if the rig has moved, D-027), which says how
+  the rig sits; the others start from their places on the rig turned the
+  same way and are refined on their own stars (pointing and lens). One
+  with too few (cloud, trees) turns with the rig. On the rig 2026-11-04,
+  the config turned 25° and tipped 1.5° came back to within 0.03-0.14° of
+  the real alignment in ~4 minutes; an unmoved rig solves in ~16 s.
+* **When:** the server (`skydome_server/sky.py`) runs
+  `tools/align_from_stars.py --save` once it's dark (Sun 12° down) after
+  every start-up, then once a night; after a failure (cloud) every 20
+  minutes until dawn. A "Calibrate from the stars" button runs it now (Sun
+  6° down or more) and applies what it finds; the automatic run writes only
+  if some camera's sky moved 0.2° (night-to-night the same rig solves
+  0.02-0.09° apart, so an unmoved rig isn't restarted). Off with the
+  checkbox (`var/calibration.auto`). Progress in `var/calibration.json`.
+* **Applying:** skydome-live (`run_live.py`) notices the new calibration
+  files, waits 5 s for the last of them, rebuilds the stitch tables and
+  restarts: the picture is back in seconds, north up.
+* **Labels:** N/E/S/W (and the in-betweens) just below the horizon ring,
+  north in red; hover a star (tap, on a phone) for its name. `/api/sky`
+  gives every star to V 5.5 that's up, with its IAU proper name if it has
+  one (`star_names.py`, 224 of the brighter stars), else its Bayer or
+  Flamsteed designation, and constellation. The page places them from
+  azimuth/altitude alone, since the dome is true east-north-up once
+  aligned: on the 5120 dome the brightest stars sat 0-2 px from their
+  labels.
+* **Not covered:** planets and the Moon aren't in the catalogue (the
+  brightest "star" may have no name); a rig moved to another town needs
+  its site in `config/site.yaml` (a wrong latitude would show as a tilted
+  rig); the ground mask is in true directions, so it survives the rig
+  turning on the spot but not a new spot (redo it in daylight).
+
+---

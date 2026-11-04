@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type Stretch } from "./api";
+import { api, type Calibration, type Stretch } from "./api";
 
 // Night / Day in one click, and the night stretch that lifts faint stars (D-025)
 export function SkyPanel() {
@@ -68,6 +68,71 @@ export function SkyPanel() {
             fmt={(v) => `${v}`} onChange={(black) => change({ ...stretch, black })} />
         </div>
       )}
+      <StarCalibration />
+    </div>
+  );
+}
+
+// Calibrating from the stars (D-028): which way is north, where every star
+// is. Runs by itself after dark; the button runs it now
+function StarCalibration() {
+  const [cal, setCal] = useState<Calibration | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let t: number;
+    const load = () =>
+      api.calibration()
+        .then((c) => {
+          setCal(c);
+          t = window.setTimeout(load, c.state === "running" ? 3000 : 30000);
+        })
+        .catch(() => (t = window.setTimeout(load, 30000)));
+    load();
+    return () => window.clearTimeout(t);
+  }, []);
+  if (!cal) return null;
+
+  const run = () => {
+    setErr(null);
+    api.calibrate().then(setCal).catch((e) => setErr(String(e.message ?? e)));
+  };
+  const when = (iso?: string) =>
+    iso ? new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  const running = cal.state === "running";
+  let line: string;
+  if (running) line = `Calibrating from the stars… ${cal.message ?? ""}`;
+  else if (cal.state === "done") {
+    const turned = cal.heading_deg !== undefined && Math.abs(cal.heading_deg) >= 0.05
+      ? ` The rig had turned ${Math.abs(cal.heading_deg).toFixed(1)}° ${cal.heading_deg > 0 ? "clockwise" : "anticlockwise"}` +
+        `${cal.tilt_deg && cal.tilt_deg >= 0.1 ? ` and tipped ${cal.tilt_deg.toFixed(1)}°` : ""}.`
+      : "";
+    line = `Aligned to ${cal.stars ?? 0} stars, ${when(cal.utc ?? cal.started_utc)}.` +
+      (cal.applied ? `${turned} Updated; the dome restarted with it.` : " Nothing had moved.");
+  } else if (cal.state === "failed") line = `Last try ${when(cal.started_utc)}: ${cal.message ?? "failed"}. It tries again in 20 minutes after dark.`;
+  else line = "Not calibrated from the stars yet.";
+
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <div className="mb-1 text-sm">Find north from the stars</div>
+      <p className="text-xs leading-relaxed text-muted">{line}</p>
+      {cal.state === "done" && cal.cameras && (
+        <p className="tabular mt-1 text-xs text-muted">
+          {Object.entries(cal.cameras).map(([n, c]) => `${n} ${c.own ? c.stars : "–"}`).join(" · ")}
+        </p>
+      )}
+      <button type="button" disabled={running || !cal.dark_enough} onClick={run}
+        title={cal.dark_enough ? "Match the cameras to the stars now (a few minutes)"
+          : `Needs a dark sky: the Sun is at ${Math.round(cal.sun_alt)}°`}
+        className="mt-2 w-full rounded-lg px-3 py-1.5 text-sm ring-1 ring-line hover:text-accent disabled:opacity-50">
+        {running ? "Calibrating…" : cal.dark_enough ? "Calibrate from the stars" : "Calibrate (after dark)"}
+      </button>
+      <label className="mt-2 flex items-center gap-2 text-xs text-muted">
+        <input type="checkbox" checked={cal.auto}
+          onChange={(e) => api.setCalibrationAuto(e.target.checked).then(setCal).catch(() => {})} />
+        Every night by itself, and after each start-up once it's dark
+      </label>
+      {err && <p className="mt-1 text-xs text-red-400">{err}</p>}
     </div>
   );
 }
