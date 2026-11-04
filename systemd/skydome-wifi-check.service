@@ -1,0 +1,18 @@
+# SkyDome: after every boot, Wi-Fi on unless the cable is in (70-skydome-wifi-backup).
+# NetworkManager remembers the radio being off; with no cable at boot it may
+# never run the dispatcher, so this makes sure the rig can always be reached.
+#   sudo install -m 755 systemd/70-skydome-wifi-backup /etc/NetworkManager/dispatcher.d/
+#   sudo cp systemd/skydome-wifi-check.service /etc/systemd/system/ && sudo systemctl enable skydome-wifi-check
+[Unit]
+Description=SkyDome: Wi-Fi on unless the cable is in
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+# Give a plugged-in cable time to come up first
+ExecStartPre=/bin/sleep 45
+ExecStart=/etc/NetworkManager/dispatcher.d/70-skydome-wifi-backup
+
+[Install]
+WantedBy=multi-user.target

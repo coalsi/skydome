@@ -1,18 +1,19 @@
 #!/bin/sh
 # SkyDome: Wi-Fi is only the backup for Ethernet. NetworkManager runs this on
-# every interface change. With a wired link up, the Wi-Fi radio goes off, so
-# the rig's address and all its traffic stay on the cable (a 5120² dome is
-# ~28 Mb/s per viewer; the garden Wi-Fi carried 17-24). When the wired link
-# goes down (cable out, switch off), Wi-Fi comes back on by itself.
+# every network event. With a wired link up, the Wi-Fi radio goes off, so the
+# rig's address and all its traffic stay on the cable (a 5120² dome is ~28
+# Mb/s per viewer; the garden Wi-Fi carried 17-24). With no wired link, Wi-Fi
+# goes on.
+#
+# It looks at the wired state on every event rather than waiting for the
+# cable's own "down": NetworkManager remembers the radio being off across a
+# reboot, and a Jetson started without its cable never sees one (2026-11-04:
+# it booted with Wi-Fi off and no cable, and was unreachable).
 #
 #   sudo install -m 755 systemd/70-skydome-wifi-backup /etc/NetworkManager/dispatcher.d/
-IFACE="$1"
-ACTION="$2"
-case "$IFACE" in
-    en*|eth*) ;;
-    *) exit 0 ;;
-esac
-case "$ACTION" in
-    up) nmcli radio wifi off ;;
-    down) nmcli radio wifi on ;;
-esac
+if nmcli -t -f TYPE,STATE device 2>/dev/null | grep -q '^ethernet:connected'; then
+    [ "$(nmcli radio wifi)" = "enabled" ] && nmcli radio wifi off
+else
+    [ "$(nmcli radio wifi)" = "enabled" ] || nmcli radio wifi on
+fi
+exit 0
