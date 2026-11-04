@@ -37,6 +37,21 @@ from .system import System
 STREAM_PATHS = {"detail": "dome", "smooth": "dome-smooth"}   # mediamtx paths (config/mediamtx.yml)
 ZOOM_PATH = "dome-zoom"   # what the page is zoomed into, at the cameras' sharpness (D-023)
 
+# One click for the sky (D-025). Night: the longest exposure the cameras do
+# (1 s; they slow to 1 fps for it), full gain, no backlight lift, less colour
+# (it's mostly noise at night), and the stretch that lifts faint stars off a
+# background measured at ~36-38 (brightness 132). Day: the cameras' own auto.
+# The cameras' own contrast/gamma/brightness can't do the stretch: on the rig
+# they moved stars by 2-3 levels at most, and contrast > 65 crushed the sky to 0.
+PRESETS = {
+    "night": {"camera": {"auto_exposure": 1, "exposure_dynamic_framerate": 1, "exposure_time_absolute": 10000,
+                         "gain": 190, "backlight_compensation": 0, "saturation": 60},
+              "stretch": {"black": 34, "k": 30}},   # tuned on the rig 2026-11-03: most clear stars before noise
+    "day": {"camera": {"auto_exposure": 3, "exposure_dynamic_framerate": 0, "gain": 140,
+                       "backlight_compensation": 48, "saturation": 100},
+            "stretch": {"black": 0, "k": 0}},
+}
+
 
 @dataclass
 class Live:
@@ -49,6 +64,7 @@ class Live:
     zoom_file: Path | None = None      # skydome-live renders this rectangle to /dome-zoom (D-023)
     horizon_file: Path | None = None   # ground mask (D-024): on while this file exists
     raw_dir: Path | None = None        # skydome-live saves camera frames here on request (D-023)
+    stretch_file: Path | None = None   # night stretch "black k" (D-025)
     extra_files: tuple[Path, ...] = ()  # put in the raw download for reference (alignment, cameras)
     edge_deg: float = 100.0            # zenith angle at the dome's edge (config/modes.yaml, D-018)
     paths: Callable[[], dict | None] | None = field(default=None, repr=False)   # tests replace mediamtx
@@ -142,6 +158,47 @@ def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapsho
     async def webrtc(rest: str, request: Request) -> Response:
         body = await request.body()
         return await run_in_threadpool(whep, request.method, rest, body, request.headers.get("content-type"))
+
+    # ---- night stretch and presets (D-025) --------------------------------------------
+
+    def read_stretch() -> dict:
+        try:
+            black, k = (float(x) for x in live_cfg.stretch_file.read_text().split()[:2])
+        except (AttributeError, OSError, ValueError):
+            black, k = 0.0, 0.0
+        return {"black": black, "k": k}
+
+    def write_stretch(black: float, k: float) -> dict:
+        if not live_cfg.stretch_file:
+            raise HTTPException(404, "night stretch isn't set up")
+        if not (0 <= black <= 200 and 0 <= k <= 100):
+            raise HTTPException(400, "want black 0..200 and k 0..100")
+        tmp = live_cfg.stretch_file.with_name(live_cfg.stretch_file.name + ".tmp")
+        tmp.write_text(f"{black:g} {k:g}\n")
+        tmp.replace(live_cfg.stretch_file)
+        return read_stretch()
+
+    @app.get("/api/stretch")
+    def get_stretch() -> dict:
+        return read_stretch()
+
+    @app.put("/api/stretch")
+    def put_stretch(black: float = Body(...), k: float = Body(...)) -> dict:
+        """Night stretch of the dome: black point, and k for 255·asinh(k·x)/asinh(k) (0 = off)."""
+        return write_stretch(black, k)
+
+    @app.post("/api/preset/{name}")
+    def preset(name: str) -> dict:
+        """Night or Day in one go: camera settings for all five cameras, and the stretch."""
+        p = PRESETS.get(name)
+        if not p:
+            raise HTTPException(404, f"presets: {', '.join(PRESETS)}")
+        ctrls = settings.controls()
+        try:
+            settings.update({k: v for k, v in p["camera"].items() if k in ctrls})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"preset": name, "stretch": write_stretch(**p["stretch"])}
 
     # ---- zoom (D-023) --------------------------------------------------------------
 

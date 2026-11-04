@@ -38,6 +38,9 @@ FALLBACK_CONTROLS = {c.name: c for c in (
     Control(0x0098091C, "backlight_compensation", 0, 160, 1, 48),
     Control(0x009A0901, "auto_exposure", 1, 3, 1, 3),
     Control(0x009A0902, "exposure_time_absolute", 1, 10000, 1, 156),
+    # Let the camera slow its frame rate to fit a long exposure (1 s -> 1 fps);
+    # without it the exposure stops at one frame time (66 ms at 15 fps). Night (D-025)
+    Control(0x009A0903, "exposure_dynamic_framerate", 0, 1, 1, 0),
 )}
 
 # The picture controls offered for change (web page, ONVIF, the file). The

@@ -41,6 +41,11 @@ export interface Status {
   };
 }
 
+export interface Stretch {
+  black: number; // below this is black
+  k: number;     // asinh strength; 0 = off
+}
+
 export interface Control {
   name: string;
   min: number;
@@ -74,6 +79,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => json<{ on: boolean }>(r)),
+  stretch: () => fetch("/api/stretch").then((r) => json<Stretch>(r)),
+  setStretch: (s: Stretch) =>
+    fetch("/api/stretch", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s) })
+      .then((r) => json<Stretch>(r)),
+  preset: (name: "night" | "day") =>
+    fetch(`/api/preset/${name}`, { method: "POST" }).then((r) => json<{ preset: string; stretch: Stretch }>(r)),
   setMode: (mode: Mode) =>
     fetch("/api/mode", {
       method: "PUT",

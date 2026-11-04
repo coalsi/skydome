@@ -264,3 +264,29 @@ def test_raw_download_zips_each_cameras_frame(tmp_path):
     z = zipfile.ZipFile(io.BytesIO(r.content))
     assert set(z.namelist()) == {"north.jpg", "east.jpg", "cameras.yaml", "README.txt"}
     assert z.read("north.jpg").startswith(b"\xff\xd8")
+
+
+def test_night_and_day_presets(tmp_path):
+    from skydome_server.app import PRESETS
+
+    FakeDevice.log = []
+    cams = [CameraNode("/dev/video0", ("video0", "2-1.1", "3"))]
+    settings = CameraSettings(tmp_path / "s.yaml", finder=lambda: list(cams), opener=FakeDevice, log=lambda *a, **k: None)
+    sf = tmp_path / "stretch.txt"
+    lv = Live(tmp_path / "mode.yaml", [], paths=lambda: {}, stretch_file=sf)
+    client = TestClient(create_app(settings, lv, System(tmp_path), SnapshotSource(tmp_path / "s.jpg")))
+    assert client.get("/api/stretch").json() == {"black": 0.0, "k": 0.0}
+
+    r = client.post("/api/preset/night").json()
+    assert r["stretch"] == {"black": 34.0, "k": 30.0} and sf.read_text().split() == ["34", "30"]
+    assert settings.values["exposure_dynamic_framerate"] == 1 and settings.values["exposure_time_absolute"] == 10000
+    # Long exposure reaches the camera: manual mode first, then the time it allows
+    names = [n for _, n, _ in FakeDevice.log]
+    assert names.index("auto_exposure") < names.index("exposure_time_absolute")
+
+    assert client.put("/api/stretch", json={"black": 30, "k": 12}).json() == {"black": 30.0, "k": 12.0}
+    assert client.put("/api/stretch", json={"black": 30, "k": 500}).status_code == 400
+    assert client.post("/api/preset/day").json()["stretch"] == {"black": 0.0, "k": 0.0}
+    assert settings.values["auto_exposure"] == 3
+    assert client.post("/api/preset/noon").status_code == 404
+    assert set(PRESETS) == {"night", "day"}

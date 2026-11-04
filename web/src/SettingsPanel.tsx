@@ -20,6 +20,9 @@ const META: Record<string, Meta> = {
     label: "Exposure time", group: "Exposure", kind: "log", needsOff: "auto_exposure",
     fmt: (v) => (v >= 10000 ? "1 s" : `${(v / 10).toFixed(v < 100 ? 1 : 0)} ms`),
   },
+  exposure_dynamic_framerate: {
+    label: "Slow down for long exposures", group: "Exposure", kind: "toggle", on: 1, off: 0,
+  },
   gain: { label: "Gain", group: "Exposure" },
   backlight_compensation: { label: "Backlight compensation", group: "Exposure" },
   white_balance_automatic: { label: "Auto white balance", group: "Colour", kind: "toggle", on: 1, off: 0 },

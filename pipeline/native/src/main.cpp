@@ -54,6 +54,7 @@ struct Options {
     std::string zoom_sink = "rtspclientsink location=rtsp://127.0.0.1:8554/dome-zoom protocols=tcp latency=0";
     std::string horizon;                   // ground mask file
     std::string raw_dir;                   // raw camera frames on request
+    std::string stretch;                   // night stretch file: "black k"
 };
 
 // A request older than this means nobody is zoomed in any more; the zoom
@@ -111,6 +112,7 @@ void usage() {
                  "  --zoom-bitrate KBPS  zoom stream bitrate (default 8000)\n"
                  "  --zoom-sink DESC     zoom stream sink (default RTSP to mediamtx /dome-zoom)\n"
                  "  --horizon FILE       ground mask: 360 horizon altitudes; reread when it changes\n"
+                 "  --stretch FILE       night stretch \"black k\" (k 0 = off); reread when it changes\n"
                  "  --raw-dir DIR        when DIR/request appears, save each camera's next frame as sent\n"
                  "                       (DIR/<camera>.jpg)\n");
 }
@@ -156,6 +158,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--zoom-sink") o.zoom_sink = next();
         else if (a == "--horizon") o.horizon = next();
         else if (a == "--raw-dir") o.raw_dir = next();
+        else if (a == "--stretch") o.stretch = next();
         else if (a == "-h" || a == "--help") {
             usage();
             std::exit(0);
@@ -279,6 +282,10 @@ int run(int argc, char** argv) {
     // Ground mask
     time_t horizon_mtime = -1;
     bool horizon_on = false;
+
+    // Night stretch
+    time_t stretch_mtime = -1;
+    float stretch_black = 0.f, stretch_k = 0.f;
     cudaStream_t stream;
     cuda_check(cudaStreamCreate(&stream), "cudaStreamCreate");
 
@@ -312,6 +319,20 @@ int run(int argc, char** argv) {
                     if (horizon_on != !h.empty())
                         std::fprintf(stderr, "ground mask %s\n", h.empty() ? "off" : "on");
                     horizon_on = !h.empty();
+                }
+            }
+            if (!o.stretch.empty()) {
+                const time_t m = mtime(o.stretch);
+                if (m != stretch_mtime) {
+                    stretch_mtime = m;
+                    float b = 0.f, k = 0.f;
+                    std::ifstream f(o.stretch);
+                    if (!(m && f >> b >> k)) b = k = 0.f;
+                    stretch_black = b;
+                    stretch_k = k;
+                    stitcher.set_stretch(b, k);
+                    if (full) full->set_stretch(b, k);
+                    std::fprintf(stderr, "night stretch: black %.0f, k %.1f%s\n", b, k, k > 0.f ? "" : " (off)");
                 }
             }
             if (!o.raw_dir.empty() && mtime(o.raw_dir + "/request")) {
@@ -357,7 +378,7 @@ int run(int argc, char** argv) {
         if (any) {
             if (balance && now >= next_balance) {
                 // Once a second, a quarter of the way: a few seconds to settle, no flicker
-                if (balance->update(inputs.data(), stream, 0.25f)) {
+                if (balance->update(inputs.data(), stream, 0.25f, stretch_k > 0.f ? stretch_black : 0.f)) {
                     stitcher.set_corrections(balance->corrections());
                     if (full) full->set_corrections(balance->corrections());
                 }
@@ -396,7 +417,9 @@ int run(int argc, char** argv) {
 
         if (now >= next_report) {
             const std::string extra = std::string(",\"zoom\":") + (zoom_enc ? "true" : "false") +
-                                      ",\"ground_mask\":" + (horizon_on ? "true" : "false");
+                                      ",\"ground_mask\":" + (horizon_on ? "true" : "false") +
+                                      ",\"stretch\":{\"black\":" + std::to_string(stretch_black) +
+                                      ",\"k\":" + std::to_string(stretch_k) + "}";
             report(o, cams, enc, balance.get(), extra, st, now);
             next_report = now + std::chrono::seconds(2);
         }

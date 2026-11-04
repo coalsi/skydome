@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Mode, type Status } from "./api";
 import { DomeView } from "./DomeView";
 import { GroundMask } from "./GroundMask";
+import { SkyPanel } from "./SkyPanel";
 import { HealthPanel } from "./HealthPanel";
 import { SettingsPanel } from "./SettingsPanel";
 
@@ -96,6 +97,9 @@ export default function App() {
       <aside className="flex flex-col border-line bg-panel lg:w-[380px] lg:border-l">
         <div className="border-b border-line p-4">
           <ModeSwitch mode={status?.mode} until={status?.smooth_until ?? null} busy={switching} onChange={setMode} />
+        </div>
+        <div className="border-b border-line p-4">
+          <SkyPanel />
         </div>
         <div className="border-b border-line p-4">
           <GroundMask status={status} editing={maskEdit} onEdit={setMaskEdit} />

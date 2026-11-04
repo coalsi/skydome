@@ -25,7 +25,9 @@ public:
     // move each correction `step` of the way (0..1] to the new solution.
     // Cameras without a frame keep their correction. Returns false, changing
     // nothing, when too little of the overlap was usable (night, fog, cap on).
-    bool update(const PlanarImage* inputs, cudaStream_t stream, float step);
+    // `black` is the stitch's black point (night stretch, D-025): brightness is
+    // compared on what's above it, as the stitch applies the gains
+    bool update(const PlanarImage* inputs, cudaStream_t stream, float step, float black = 0.f);
 
     const std::vector<CamCorrection>& corrections() const { return corr_; }
     int samples() const { return nsamples_; }   // overlap points in the table

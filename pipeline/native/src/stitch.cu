@@ -1,5 +1,7 @@
 #include "stitch.h"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -30,6 +32,9 @@ struct Params {
     // Per-camera brightness/colour correction (PhotoBalance): Y x gain;
     // chroma 128 + gain x (c - 128) + offset
     float gain[kMaxCams], off_a[kMaxCams], off_b[kMaxCams];
+    // Night stretch on Y after blending (D-025): black point, then
+    // 255 * asinh(k * x) / asinh(k) over x = (Y - black) / (255 - black). k = 0: off
+    float black, stretch_k, stretch_norm;
     int ncams;
     const float* gu;
     const float* gv;
@@ -110,7 +115,9 @@ __global__ void stitch_kernel(Params p) {
             sa = 128.f + p.gain[c] * (sa - 128.f) + p.off_a[c];
             sb = 128.f + p.gain[c] * (sb - 128.f) + p.off_b[c];
         } else {
-            sa *= p.gain[c];
+            // About the black point: at night the cameras' black level (~35) is
+            // most of the signal, and scaling it would leave each camera a different grey
+            sa = p.black + (sa - p.black) * p.gain[c];
         }
         if (w > 0.f) {
             acc_a += w * sa;
@@ -133,6 +140,10 @@ __global__ void stitch_kernel(Params p) {
     } else {
         ra = p.fill_a;
         rb = p.fill_b;
+    }
+    if (!kTwo && p.stretch_k > 0.f) {
+        const float x = fmaxf(ra - p.black, 0.f) / (255.f - p.black);
+        ra = 255.f * asinhf(p.stretch_k * x) * p.stretch_norm;
     }
     p.outa[o] = to_u8(ra);
     if (kTwo) p.outb[o] = to_u8(rb);
@@ -169,6 +180,11 @@ void GpuStitcher::set_horizon(const std::vector<float>& alt_by_az) {
     has_horizon_ = true;
 }
 
+void GpuStitcher::set_stretch(float black, float k) {
+    stretch_k_ = std::max(k, 0.f);
+    black_ = stretch_k_ > 0.f ? std::min(std::max(black, 0.f), 200.f) : 0.f;   // off: as before
+}
+
 void GpuStitcher::set_corrections(const std::vector<CamCorrection>& corr) {
     for (int c = 0; c < ncams_ && c < static_cast<int>(corr.size()); ++c) corr_[c] = corr[c];
 }
@@ -198,6 +214,9 @@ void GpuStitcher::run_view(const PlanarImage* inputs, const I420Out& out, const 
         p->nodes = nodes_;
         p->step = step_;
         p->size = size_;
+        p->black = black_;
+        p->stretch_k = stretch_k_;
+        p->stretch_norm = stretch_k_ > 0.f ? 1.f / asinhf(stretch_k_) : 1.f;
         p->x0 = view.x0;
         p->y0 = view.y0;
         p->scale = view.scale;

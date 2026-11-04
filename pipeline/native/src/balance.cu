@@ -14,6 +14,7 @@ constexpr int kFields = 6;              // n, Σ(ln Ya − ln Yb), Σ Ua', Σ Ub
 constexpr float kMargin = 0.01f;        // skip the outermost 1% of each picture
 constexpr float kMaxZenithDeg = 88.f;   // sky only: the ground near the rig sits at different parallax
 constexpr float kYLow = 10.f, kYHigh = 240.f;   // too dark to trust, or clipped
+constexpr float kNightLow = 2.f;   // with a black point: this much above it is usable
 constexpr int kMinPairSamples = 200;    // a pair with fewer usable points says nothing
 constexpr float kRegularise = 0.02f;    // pulls each correction toward none
 constexpr float kMinGain = 0.5f, kMaxGain = 2.f, kMaxOffset = 40.f;
@@ -47,7 +48,8 @@ struct Frames {
     CamFrame cam[kMaxCams];
 };
 
-__global__ void measure_kernel(const PhotoBalance::Sample* samples, int n, Frames f, int npairs, float* acc) {
+__global__ void measure_kernel(const PhotoBalance::Sample* samples, int n, Frames f, int npairs, float* acc,
+                               float black, float low) {
     __shared__ float block[kMaxPairs * kFields];
     for (int i = threadIdx.x; i < npairs * kFields; i += blockDim.x) block[i] = 0.f;
     __syncthreads();
@@ -58,8 +60,8 @@ __global__ void measure_kernel(const PhotoBalance::Sample* samples, int n, Frame
         const CamFrame& A = f.cam[s.a];
         const CamFrame& B = f.cam[s.b];
         if (A.y.p && B.y.p) {
-            const float ya = at(A.y, s.ua, s.va), yb = at(B.y, s.ub, s.vb);
-            if (ya > kYLow && ya < kYHigh && yb > kYLow && yb < kYHigh) {
+            const float ya = at(A.y, s.ua, s.va) - black, yb = at(B.y, s.ub, s.vb) - black;
+            if (ya > low && ya < kYHigh - black && yb > low && yb < kYHigh - black) {
                 float* b = block + s.pair * kFields;
                 atomicAdd(b + 0, 1.f);
                 atomicAdd(b + 1, __logf(ya) - __logf(yb));
@@ -156,7 +158,7 @@ PhotoBalance::~PhotoBalance() {
     cudaFree(d_acc_);
 }
 
-bool PhotoBalance::update(const PlanarImage* inputs, cudaStream_t stream, float step) {
+bool PhotoBalance::update(const PlanarImage* inputs, cudaStream_t stream, float step, float black) {
     used_ = 0;
     if (!nsamples_ || !npairs_) return false;
     Frames f{};
@@ -171,8 +173,8 @@ bool PhotoBalance::update(const PlanarImage* inputs, cudaStream_t stream, float 
     }
     cuda_check(cudaMemsetAsync(d_acc_, 0, npairs_ * kFields * sizeof(float), stream), "clear balance sums");
     const int threads = 256;
-    measure_kernel<<<(nsamples_ + threads - 1) / threads, threads, 0, stream>>>(d_samples_, nsamples_, f, npairs_,
-                                                                              d_acc_);
+    measure_kernel<<<(nsamples_ + threads - 1) / threads, threads, 0, stream>>>(
+        d_samples_, nsamples_, f, npairs_, d_acc_, black, black > 0.f ? kNightLow : kYLow);
     cuda_check(cudaGetLastError(), "balance kernel launch");
     float acc[kMaxPairs * kFields];
     cuda_check(cudaMemcpyAsync(acc, d_acc_, npairs_ * kFields * sizeof(float), cudaMemcpyDeviceToHost, stream),

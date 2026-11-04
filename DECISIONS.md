@@ -697,6 +697,33 @@ and 2–5; a sunset glow and sunlit clouds stay sky. Sunlit treetops can
 still get through, so the page has an editor: drag on the dome to move the
 line, save, switch it on and off.
 
+### D-025 · Night: long exposures and a star stretch (owner asked, 2026-11-03)
+Measured on the rig the first dark evening (light-polluted, some cloud):
+* **Exposure is capped by the frame rate** unless the camera may slow
+  down: `exposure_dynamic_framerate` = 1 lets a 1 s exposure (the most
+  the cameras take) run at 1 fps; without it the 15 fps capture stops each
+  frame at ~66 ms. It's now one of the picture controls (page, file).
+  skydome-live keeps showing each camera's latest frame, so the dome still
+  streams at 15 fps and the sky updates once a second.
+* **Stars are there but faint:** at 1 s and full gain (190) they sit
+  ~15-25 levels above a ~36-38 background (the cameras' black level at
+  brightness 132). The cameras' contrast/gamma/brightness moved them by
+  2-3 levels at most, and contrast above 65 crushed the sky to 0.
+  Uncompressed 1080p (YUYV) was no better than 4K MJPEG, so 4K stays.
+* **Night stretch in the stitch:** Y → 255·asinh(k·x)/asinh(k), x = (Y −
+  black)/(255 − black), after blending (`var/stretch.txt` "black k",
+  reread within a second; `/api/stretch`; sliders on the page). Tuned
+  live: black 34, k 30 gave the most clear stars before noise took over.
+  With a black point, camera matching (D-022) compares and scales the
+  light above it, since the black level dominates at night.
+* **Presets** (`/api/preset/night|day`, buttons on the page): Night =
+  manual 1 s, slow-down on, gain 190, backlight 0, saturation 60, stretch
+  34/30; Day = the cameras' auto exposure, defaults, no stretch.
+* **Watch:** an NVR that pushes ONVIF imaging settings when it connects
+  (this one set auto exposure and backlight 160 at 18:49) undoes Night.
+* **Not yet:** stacking frames (handoff's Night/Deep modes) and switching
+  presets by sun altitude (D-015 Auto).
+
 ---
 
 ## Open questions (handoff §8)
