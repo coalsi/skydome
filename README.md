@@ -17,7 +17,8 @@ Five-camera all-sky observatory on a Jetson Orin Nano Super. Start with
 | Live dome: capture → CUDA stitch → H.264 → mediamtx (D-016) | working: 4096² × 15 and 2048² × 30 steady, plays in Chrome over WebRTC |
 | ONVIF camera for NVRs: discovery, stream, snapshot, imaging settings (D-020) | working; tested with onvif-zeep |
 | Web page (live dome, camera settings, Detail/Smooth, health) + API, one server with ONVIF (D-021) | working: http://skydome.local |
-| Exposure matching, recording, astro, the rest of the planetarium console | not started |
+| Brightness/colour matching between cameras in the stitch (D-022) | working: live, ~1 ms a second |
+| Shared exposure control, vignetting, recording, astro, the rest of the planetarium console | not started |
 
 ## Layout
 

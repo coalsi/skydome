@@ -7,6 +7,8 @@ export interface CameraStats {
   state: string;
   restarts: number;
   damaged_dropped: number;
+  // Brightness/colour matching to the neighbours (D-022): Y x gain, U/V shifted
+  balance?: { gain: number; u: number; v: number };
 }
 
 export interface LiveStats {
@@ -18,6 +20,7 @@ export interface LiveStats {
   encoder: string;
   encoder_restarts: number;
   cameras: Record<string, CameraStats>;
+  balance_points?: number;
 }
 
 export interface Status {

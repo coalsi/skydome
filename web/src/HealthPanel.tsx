@@ -27,6 +27,9 @@ export function HealthPanel({ status }: { status: Status | null }) {
                 <tr className="text-left text-[11px] text-muted">
                   <th className="pb-1 font-medium">Camera</th>
                   <th className="pb-1 text-right font-medium">fps</th>
+                  <th className="pb-1 text-right font-medium" title="Brightness correction that matches this camera to its neighbours">
+                    Match
+                  </th>
                   <th className="pb-1 text-right font-medium" title="Times the camera was reopened">Restarts</th>
                   <th className="pb-1 text-right font-medium" title="Damaged frames dropped">Dropped</th>
                 </tr>
@@ -41,6 +44,10 @@ export function HealthPanel({ status }: { status: Status | null }) {
                       {c.state !== "live" && <span className="ml-1.5 text-xs text-bad">{c.state}</span>}
                     </td>
                     <td className={`text-right ${toneText(c.fps, target)}`}>{c.fps.toFixed(1)}</td>
+                    <td className="text-right text-muted"
+                      title={c.balance ? `colour shift U ${c.balance.u.toFixed(1)}, V ${c.balance.v.toFixed(1)}` : "off"}>
+                      {c.balance ? `×${c.balance.gain.toFixed(2)}` : "–"}
+                    </td>
                     <td className="text-right text-muted">{c.restarts}</td>
                     <td className="text-right text-muted">{c.damaged_dropped}</td>
                   </tr>
@@ -48,6 +55,13 @@ export function HealthPanel({ status }: { status: Status | null }) {
               </tbody>
             </table>
             {live.encoder !== "running" && <p className="mt-2 text-xs text-bad">Encoder: {live.encoder}</p>}
+            {live.balance_points !== undefined && (
+              <p className="mt-2 text-xs leading-relaxed text-muted">
+                {live.balance_points > 0
+                  ? `Cameras matched to each other from ${live.balance_points.toLocaleString()} overlap points.`
+                  : "Camera matching is holding its last values (too dark or too little overlap to measure)."}
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm text-muted">Not running.</p>

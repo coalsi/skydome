@@ -23,6 +23,7 @@
 
 #include "capture.h"
 #include "encoder.h"
+#include "balance.h"
 #include "lut.h"
 #include "snapshot.h"
 #include "stitch.h"
@@ -39,6 +40,7 @@ struct Options {
     std::string stats_file;
     std::string snapshot;   // JPEG stills on request (snapshot.h)
     long max_frames = 0;   // 0 = run until stopped
+    bool balance = true;   // match brightness and colour between cameras (D-022)
 };
 
 void usage() {
@@ -52,7 +54,8 @@ void usage() {
                  "  --no-encode          stitch only (benchmark)\n"
                  "  --stats-file PATH    write JSON stats every 2 s\n"
                  "  --snapshot PATH      write a JPEG of the dome to PATH whenever PATH.request appears\n"
-                 "  --frames N           stop after N output frames\n");
+                 "  --frames N           stop after N output frames\n"
+                 "  --no-balance         don't match brightness and colour between cameras\n");
 }
 
 Options parse(int argc, char** argv) {
@@ -85,6 +88,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--stats-file") o.stats_file = next();
         else if (a == "--snapshot") o.snapshot = next();
         else if (a == "--frames") o.max_frames = std::stol(next());
+        else if (a == "--no-balance") o.balance = false;
         else if (a == "-h" || a == "--help") {
             usage();
             std::exit(0);
@@ -107,7 +111,7 @@ struct Stats {
 };
 
 void report(const Options& o, std::vector<std::unique_ptr<CameraSource>>& cams, const Encoder& enc,
-            Stats& st, Clock::time_point now) {
+            const PhotoBalance* balance, Stats& st, Clock::time_point now) {
     const double secs = std::chrono::duration<double>(now - st.since).count();
     const double out_fps = st.out_frames / secs;
     const double avg_ms = st.out_frames ? st.stitch_ms / st.out_frames : 0;
@@ -133,10 +137,18 @@ void report(const Options& o, std::vector<std::unique_ptr<CameraSource>>& cams, 
         line += buf;
         json += (first ? "" : ",") + std::string("\"") + c.name() + "\":{\"fps\":" + std::to_string(fps) +
                 ",\"state\":\"" + c.state() + "\",\"restarts\":" + std::to_string(c.restarts()) +
-                ",\"damaged_dropped\":" + std::to_string(dropped) + "}";
+                ",\"damaged_dropped\":" + std::to_string(dropped);
+        if (balance) {
+            const CamCorrection& k = balance->corrections()[&cp - cams.data()];
+            json += ",\"balance\":{\"gain\":" + std::to_string(k.gain) + ",\"u\":" + std::to_string(k.u) +
+                    ",\"v\":" + std::to_string(k.v) + "}";
+        }
+        json += "}";
         first = false;
     }
-    json += "}}\n";
+    json += "}";
+    if (balance) json += ",\"balance_points\":" + std::to_string(balance->used());
+    json += "}\n";
     std::fprintf(stderr, "%s\n", line.c_str());
     if (!o.stats_file.empty()) {
         const std::string tmp = o.stats_file + ".tmp";
@@ -155,6 +167,11 @@ int run(int argc, char** argv) {
 
     const GridLut lut = GridLut::load(o.lut);
     GpuStitcher stitcher(lut);
+    std::unique_ptr<PhotoBalance> balance;
+    if (o.balance) {
+        balance = std::make_unique<PhotoBalance>(lut);
+        std::fprintf(stderr, "balance: %d overlap points\n", balance->samples());
+    }
     EncoderConfig ec = o.enc;
     ec.size = lut.size;
 
@@ -178,6 +195,7 @@ int run(int argc, char** argv) {
     const auto period = std::chrono::nanoseconds(1'000'000'000LL / ec.fps);
     auto next_tick = Clock::now();
     auto next_report = next_tick + std::chrono::seconds(2);
+    auto next_balance = next_tick;
     Stats st;
     std::vector<PlanarImage> inputs(lut.cams.size());
     long produced = 0;
@@ -194,6 +212,11 @@ int run(int argc, char** argv) {
             any |= inputs[c].plane[0] != nullptr;
         }
         if (any) {
+            if (balance && now >= next_balance) {
+                // Once a second, a quarter of the way: a few seconds to settle, no flicker
+                if (balance->update(inputs.data(), stream, 0.25f)) stitcher.set_corrections(balance->corrections());
+                next_balance = now + std::chrono::seconds(1);
+            }
             if (FramePool::Frame* f = pool.acquire()) {
                 const auto t0 = Clock::now();
                 stitcher.run(inputs.data(), f->dev, stream);
@@ -211,7 +234,7 @@ int run(int argc, char** argv) {
         }
 
         if (now >= next_report) {
-            report(o, cams, enc, st, now);
+            report(o, cams, enc, balance.get(), st, now);
             next_report = now + std::chrono::seconds(2);
         }
 

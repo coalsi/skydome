@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "sample.cuh"
+
 void cuda_check(cudaError_t e, const char* what) {
     if (e != cudaSuccess) throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(e));
 }
@@ -25,6 +27,9 @@ struct CamPlanes {
 
 struct Params {
     CamPlanes cam[kMaxCams];
+    // Per-camera brightness/colour correction (PhotoBalance): Y x gain;
+    // chroma 128 + gain x (c - 128) + offset
+    float gain[kMaxCams], off_a[kMaxCams], off_b[kMaxCams];
     int ncams;
     const float* gu;
     const float* gv;
@@ -36,20 +41,6 @@ struct Params {
     uint8_t* outb;
     uint8_t fill_a, fill_b;
 };
-
-__device__ __forceinline__ float sample(const uint8_t* p, int pitch, int w, int h, float x, float y) {
-    // x, y are inside [0, w-1] x [0, h-1]; clamp the 2x2 footprint at the border
-    int x0 = min(static_cast<int>(x), w - 1);
-    int y0 = min(static_cast<int>(y), h - 1);
-    int x1 = min(x0 + 1, w - 1);
-    int y1 = min(y0 + 1, h - 1);
-    float fx = x - x0, fy = y - y0;
-    const uint8_t* r0 = p + static_cast<size_t>(y0) * pitch;
-    const uint8_t* r1 = p + static_cast<size_t>(y1) * pitch;
-    float top = __ldg(r0 + x0) * (1.f - fx) + __ldg(r0 + x1) * fx;
-    float bot = __ldg(r1 + x0) * (1.f - fx) + __ldg(r1 + x1) * fx;
-    return top * (1.f - fy) + bot * fy;
-}
 
 __device__ __forceinline__ uint8_t to_u8(float x) {
     return static_cast<uint8_t>(fminf(fmaxf(x + 0.5f, 0.f), 255.f));
@@ -99,8 +90,14 @@ __global__ void stitch_kernel(Params p) {
         const float d = fminf(fminf(u, cp.w - 1 - u), fminf(v, cp.h - 1 - v));
         const float t = fminf(fmaxf(d / cp.feather, 0.f), 1.f);
         const float w = t * t * (3.f - 2.f * t);
-        const float sa = sample(cp.a, cp.pitch, cp.w, cp.h, u, v);
-        const float sb = kTwo ? sample(cp.b, cp.pitch, cp.w, cp.h, u, v) : 0.f;
+        float sa = sample(cp.a, cp.pitch, cp.w, cp.h, u, v);
+        float sb = kTwo ? sample(cp.b, cp.pitch, cp.w, cp.h, u, v) : 0.f;
+        if (kTwo) {
+            sa = 128.f + p.gain[c] * (sa - 128.f) + p.off_a[c];
+            sb = 128.f + p.gain[c] * (sb - 128.f) + p.off_b[c];
+        } else {
+            sa *= p.gain[c];
+        }
         if (w > 0.f) {
             acc_a += w * sa;
             acc_b += w * sb;
@@ -133,6 +130,7 @@ GpuStitcher::GpuStitcher(const GridLut& lut)
     : size_(lut.size), step_(lut.step), nodes_(lut.nodes), ncams_(static_cast<int>(lut.cams.size())) {
     if (ncams_ > kMaxCams) throw std::runtime_error("too many cameras in the stitch table");
     for (int c = 0; c < ncams_; ++c) {
+        corr_[c] = CamCorrection{};
         cam_w_[c] = lut.cams[c].width;
         cam_h_[c] = lut.cams[c].height;
         feather_[c] = lut.cams[c].feather;
@@ -144,6 +142,10 @@ GpuStitcher::GpuStitcher(const GridLut& lut)
     cuda_check(cudaMemcpy(d_u_, lut.u.data(), plane, cudaMemcpyHostToDevice), "upload u");
     cuda_check(cudaMemcpy(d_v_, lut.v.data(), plane, cudaMemcpyHostToDevice), "upload v");
     cuda_check(cudaMemcpy(d_mask_, lut.mask.data(), lut.mask.size(), cudaMemcpyHostToDevice), "upload mask");
+}
+
+void GpuStitcher::set_corrections(const std::vector<CamCorrection>& corr) {
+    for (int c = 0; c < ncams_ && c < static_cast<int>(corr.size()); ++c) corr_[c] = corr[c];
 }
 
 GpuStitcher::~GpuStitcher() {
@@ -165,6 +167,9 @@ void GpuStitcher::run(const PlanarImage* inputs, const I420Out& out, cudaStream_
         p->size = size_;
     }
     for (int c = 0; c < ncams_; ++c) {
+        for (Params* p : {&luma, &chroma}) p->gain[c] = corr_[c].gain;
+        chroma.off_a[c] = corr_[c].u;
+        chroma.off_b[c] = corr_[c].v;
         const PlanarImage& im = inputs[c];
         if (!im.plane[0]) continue;
         const float sx = static_cast<float>(im.width[0]) / cam_w_[c];

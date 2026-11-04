@@ -25,11 +25,11 @@ def to_u8(x):
     return np.clip(np.round(x), 0, 255).astype(np.uint8)
 
 
-def run_tool(lut_path, inputs, out_path):
-    args = [str(TOOL), "--lut", str(lut_path), "--out", str(out_path)]
+def run_tool(lut_path, inputs, out_path, extra=()):
+    args = [str(TOOL), "--lut", str(lut_path), "--out", str(out_path), *extra]
     for name, (path, w, h, fmt) in inputs.items():
         args += ["--input", f"{name}={path}:{w}x{h}:{fmt}"]
-    subprocess.run(args, check=True, capture_output=True, text=True)
+    run_tool.stdout = subprocess.run(args, check=True, capture_output=True, text=True).stdout
     raw = np.fromfile(out_path, np.uint8)
     y = raw[:DOME * DOME].reshape(DOME, DOME)
     c = DOME // 2
@@ -76,3 +76,38 @@ def test_kernel_matches_twin(tmp_path, fmt):
         # float32 on both sides; only rounding at .5 boundaries may differ
         assert diff.max() <= 1, f"{name} differs by up to {diff.max()}"
         assert (diff > 0).mean() < 0.01, f"{name}: {(diff > 0).mean():.2%} of pixels differ"
+
+
+def test_balance_evens_out_a_mismatched_camera(tmp_path):
+    """PhotoBalance (D-022): one camera exposed darker and white-balanced bluer
+    than the rest is brought back in line with its neighbours."""
+    cams = rig(FisheyeLens)
+    glut = build_grid_lut(AllSkyProjection(size=DOME), cams, step=1)
+    lut_path = tmp_path / "t.lut"
+    glut.save(lut_path)
+    inputs = {}
+    for cam in cams:
+        y = 40 + 150 * render_camera(cam, SkyScene(grid_step_deg=15, grid_width_deg=1.5))
+        u = np.full((cam.height // 2, cam.width // 2), 128.0)
+        if cam.name == "north":
+            y, u = y * 0.6, u + 15
+        p = tmp_path / f"{cam.name}.yuv"
+        v = np.full_like(u, 128.0)
+        p.write_bytes(to_u8(y).tobytes() + to_u8(u).tobytes() + to_u8(v).tobytes())
+        inputs[cam.name] = (p, cam.width, cam.height, "i420")
+    run_tool(lut_path, inputs, tmp_path / "out.i420", ["--balance"])
+    corr = {}
+    for line in run_tool.stdout.splitlines():
+        parts = line.split()
+        if parts[:1] == ["balance"] and "gain" in parts:
+            corr[parts[1]] = {k: float(parts[parts.index(k) + 1]) for k in ("gain", "u", "v")}
+    assert set(corr) == {c.name for c in cams}
+    others = [corr[c.name] for c in cams if c.name != "north"]
+    g_other = np.mean([o["gain"] for o in others])
+    assert corr["north"]["gain"] / g_other == pytest.approx(1 / 0.6, rel=0.05)
+    # North's U ends up where the others' is: 128 + g*15 + u_north == 128 + u_other
+    u_other = np.mean([o["u"] for o in others])
+    assert corr["north"]["gain"] * 15 + corr["north"]["u"] == pytest.approx(u_other, abs=1.0)
+    assert all(abs(c["v"]) < 1.0 for c in corr.values())
+    # Corrections stay as small as they can: brightness is shared out, not all put on north
+    assert np.exp(np.mean([np.log(c["gain"]) for c in corr.values()])) == pytest.approx(1.0, rel=0.1)

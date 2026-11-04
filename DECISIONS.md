@@ -625,6 +625,38 @@ Jetson, React + TypeScript + Vite + Tailwind for the page, WebRTC (WHEP).
   read live values; phone layout and the night theme checked.
   `server/tests`: 34 tests (33 on the Mac).
 
+### D-022 · Cameras matched to each other in the stitch (owner asked, 2026-11-03)
+The owner: the cameras' pictures are all different; make them blend. Each
+camera runs its own auto exposure and white balance, so the one facing the
+sun darkens itself and the zenith camera came out a lighter, bluer square.
+* **PhotoBalance** (`pipeline/native/src/balance.cu`), in skydome-live and
+  `skydome-stitch-files --balance`: at start-up it lists every stitch-grid
+  node in the sky (≤ 88° from the zenith) that two cameras both see, away
+  from the outer 1% of each picture (~107k points on the rig). Once a
+  second one GPU pass compares the two cameras at those points, skipping
+  dark (Y ≤ 10) and clipped (Y ≥ 240) ones, and sums per pair the
+  brightness ratio (in logs) and the colour (U, V). A small weighted least
+  squares gives one gain and one colour offset per camera that make the
+  overlaps agree, as small as possible (they average out to no change, so
+  the dome's brightness is still the cameras' own). Each update moves a
+  quarter of the way (no flicker; settles in a few seconds); gains are
+  held to 0.5–2, offsets to ±40. Too little usable overlap (night, fog)
+  keeps the last values. The stitch applies Y × gain and
+  U, V = 128 + gain × (c − 128) + offset; ~1 ms a second, the stitch itself
+  is unchanged at ~11 ms. `--no-balance` turns it off. The NumPy twin
+  (`gpu_lut.grid_stitch`) has no balance; the kernel matches it with none.
+* **Shown** on the web page's Health tab ("Match" per camera) and in the
+  live stats (`balance` per camera, `balance_points`).
+* **Not done yet:** lens vignetting (each picture darkens toward its
+  edges, which still leaves a faint cross where four corners meet) and a
+  shared exposure target that drives the cameras themselves (D-015;
+  matters at night, where a digital gain only amplifies noise).
+* **Tested 2026-11-03** outdoors at sunset: stills stitched with and
+  without (zenith ×0.72, south ×1.31: the patches and the zenith square
+  gone); live, 15 fps, corrections settled to zenith ×0.82, south ×1.23.
+  `test_native_stitch.py`: a camera made 40% darker and bluer is brought
+  back (gain within 5% of 1/0.6, colour within 1).
+
 ---
 
 ## Open questions (handoff §8)

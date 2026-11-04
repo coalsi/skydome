@@ -3,7 +3,10 @@
 // the NumPy twin, and to time the kernel on its own.
 //
 //   skydome-stitch-files --lut var/stitch_4096.lut --out dome.i420 \
-//       --input zenith=zenith.yuv:3840x2160:y42b --input north=... [--repeat 50]
+//       --input zenith=zenith.yuv:3840x2160:y42b --input north=... [--repeat 50] [--balance]
+//
+// --balance matches brightness and colour between the cameras first
+// (PhotoBalance, as skydome-live does), and prints the corrections.
 //
 // Input files are tightly packed planar YUV: y42b (4:2:2) or i420 (4:2:0).
 // Cameras in the table without an --input are treated as missing.
@@ -17,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "balance.h"
 #include "lut.h"
 #include "stitch.h"
 
@@ -47,6 +51,7 @@ int run(int argc, char** argv) {
     std::string lut_path, out_path;
     std::vector<Input> inputs;
     int repeat = 1;
+    bool balance = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string {
@@ -57,6 +62,7 @@ int run(int argc, char** argv) {
         else if (a == "--out") out_path = next();
         else if (a == "--input") inputs.push_back(parse_input(next()));
         else if (a == "--repeat") repeat = std::stoi(next());
+        else if (a == "--balance") balance = true;
         else throw std::runtime_error("unknown argument " + a);
     }
     if (lut_path.empty()) throw std::runtime_error("--lut is required");
@@ -96,6 +102,15 @@ int run(int argc, char** argv) {
     const I420Out out{d_out, d_out + ysz, d_out + ysz + csz};
     cudaStream_t stream;
     cuda_check(cudaStreamCreate(&stream), "stream");
+    if (balance) {
+        PhotoBalance pb(lut);
+        if (!pb.update(imgs.data(), stream, 1.f)) std::printf("balance: too little usable overlap; none applied\n");
+        st.set_corrections(pb.corrections());
+        for (size_t c = 0; c < lut.cams.size(); ++c)
+            std::printf("balance %-7s gain %.3f  u %+6.2f  v %+6.2f\n", lut.cams[c].name.c_str(),
+                        pb.corrections()[c].gain, pb.corrections()[c].u, pb.corrections()[c].v);
+        std::printf("balance: %d of %d overlap points used\n", pb.used(), pb.samples());
+    }
     st.run(imgs.data(), out, stream);   // warm-up
     cuda_check(cudaStreamSynchronize(stream), "warm-up");
     const auto t0 = std::chrono::steady_clock::now();

@@ -23,7 +23,7 @@ set(MMAPI /usr/src/jetson_multimedia_api CACHE PATH "Jetson Multimedia API")
 find_library(NVBUFSURFACE nvbufsurface PATHS /usr/lib/aarch64-linux-gnu/nvidia REQUIRED)
 
 # The CUDA kernel and table loader, free of GStreamer so nvcc stays happy
-add_library(skydome_stitch STATIC src/lut.cpp src/stitch.cu)
+add_library(skydome_stitch STATIC src/lut.cpp src/stitch.cu src/balance.cu)
 target_include_directories(skydome_stitch PUBLIC src)
 target_link_libraries(skydome_stitch PUBLIC CUDA::cudart)
 target_compile_options(skydome_stitch PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3 --use_fast_math>)

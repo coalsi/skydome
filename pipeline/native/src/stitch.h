@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cuda_runtime.h>
+#include <vector>
 
 #include "lut.h"
 
@@ -25,6 +26,14 @@ struct I420Out {
     uint8_t* v = nullptr;
 };
 
+// Brightness and colour correction for one camera (PhotoBalance, balance.h).
+// Full-range YUV: Y x gain; U, V: 128 + gain x (c - 128) + u / v.
+struct CamCorrection {
+    float gain = 1.f;
+    float u = 0.f;
+    float v = 0.f;
+};
+
 class GpuStitcher {
 public:
     explicit GpuStitcher(const GridLut& lut);
@@ -39,10 +48,14 @@ public:
     // and where no live camera sees the sky, the output is black.
     void run(const PlanarImage* inputs, const I420Out& out, cudaStream_t stream) const;
 
+    // Used from the next run() on; one per table camera. Default: none
+    void set_corrections(const std::vector<CamCorrection>& corr);
+
 private:
     int size_, step_, nodes_, ncams_;
     int cam_w_[8], cam_h_[8];
     float feather_[8];
+    CamCorrection corr_[8];
     float* d_u_ = nullptr;
     float* d_v_ = nullptr;
     uint8_t* d_mask_ = nullptr;

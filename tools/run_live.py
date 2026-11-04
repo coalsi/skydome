@@ -17,9 +17,9 @@ rtsp://skydome.local:8554/dome. Needs mediamtx running
 
 Cameras are found as /dev/skycam-<name> (udev rules from
 tools/gen_udev_rules.py), else by the id_path in config/cameras.yaml, else
-from --camera NAME=DEVICE. Missing cameras are left out; skydome-live picks
-them up when they appear. Rebuilds var/stitch_<size>.lut when the camera
-config or a lens calibration is newer. Stills for ONVIF's GetSnapshotUri
+from --camera NAME=DEVICE. A camera with an id_path that isn't plugged in
+yet is waited for: skydome-live picks it up when it appears. Rebuilds
+var/stitch_<size>.lut when the camera config or a lens calibration is newer. Stills for ONVIF's GetSnapshotUri
 go to --snapshot when asked for (tools/run_server.py). Runs jetson_clocks
 while it's up (D-014) if sudo allows it without a password, and restores
 the clocks after.
@@ -69,10 +69,15 @@ def find_devices(overrides: dict[str, str]) -> dict[str, str]:
         by_path = Path(f"/dev/v4l/by-path/{cam.id_path}-video-index0") if cam.id_path else None
         if link.exists():
             found[cam.name] = str(link)
-        elif by_path and by_path.exists():
+        elif by_path:
+            # Passed even when it isn't plugged in (yet): skydome-live waits for
+            # the port and takes the camera as soon as it appears. The Jetson's
+            # USB-C port has missed the zenith camera at boot until replugged
             found[cam.name] = str(by_path)
+            if not by_path.exists():
+                print(f"  {cam.name}: not on its port ({cam.id_path}) yet; waiting for it")
         else:
-            print(f"  {cam.name}: no device (no /dev/skycam-{cam.name}, no id_path match); left out")
+            print(f"  {cam.name}: no device (no /dev/skycam-{cam.name}, no id_path); left out")
     return found
 
 
