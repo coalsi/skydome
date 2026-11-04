@@ -106,11 +106,11 @@ def test_extrinsics_file_overrides_the_nominal_pointing(tmp_path):
     r = rot_z(10) @ camera_rotation(0, 90)
     (cfg / "calibration").mkdir()
     (cfg / "calibration" / "extrinsics.yaml").write_text(
-        "cameras:\n  zenith:\n    rotation: " + str(r.tolist()) + "\n")
-    assert np.allclose(load_extrinsics(cfg)["zenith"], r)
+        "cameras:\n  sky:\n    rotation: " + str(r.tolist()) + "\n  zenith:\n    rotation: " + str(r.tolist()) + "\n")
+    assert np.allclose(load_extrinsics(cfg)["sky"], r)
     cams = {c.name: c for c in calibrated_cameras(cfg)}
-    assert np.allclose(cams["zenith"].rotation, r)
-    assert np.allclose(cams["north"].rotation, camera_rotation(0, 30))
+    assert np.allclose(cams["sky"].rotation, r)
+    assert set(cams) == {"sky"}   # entries for cameras that aren't configured are ignored
 
 
 def test_bad_rotation_is_rejected(tmp_path):

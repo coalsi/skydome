@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from . import live
+from .asi_settings import AsiSettings
 from .camera_settings import CameraSettings
 from .sky import BUTTON_SUN_ALT, Sky
 from .onvif.http import OnvifEndpoint, SnapshotSource
@@ -59,6 +60,20 @@ PRESETS = {
     "day": {"camera": {"auto_exposure": 3, "exposure_dynamic_framerate": 0, "gain": 140,
                        "backlight_compensation": 48, "saturation": 100,
                        "brightness": 128, "contrast": 65, "sharpness": 128},
+            "stretch": {"black": 0, "k": 0}, "stack": 0},
+}
+
+# The same for the ZWO all-sky camera (D-029), whose own automatic exposure
+# runs from daylight video to 20 s night frames, so the presets only change
+# how the picture is shown. Night: linear (gamma 1), the stretch lifting the
+# faint end of the 12 bits, 3 frames stacked (a minute of light; stars drift
+# ~0.25° in it). Day: a display gamma, no stretch, no stack. The stretch's
+# numbers are a first guess for a sky held at 18% (~46 of 255): tune them
+# on the first clear night. sky.py switches these by the Sun.
+ASI_PRESETS = {
+    "night": {"camera": {"auto_exposure": 1, "gamma": 100},
+              "stretch": {"black": 38, "k": 20}, "stack": 3},
+    "day": {"camera": {"auto_exposure": 1, "gamma": 220},
             "stretch": {"black": 0, "k": 0}, "stack": 0},
 }
 
@@ -92,7 +107,7 @@ class Live:
         return {i["name"]: {"ready": bool(i.get("ready")), "readers": len(i.get("readers") or [])} for i in items}
 
 
-def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapshot: SnapshotSource,
+def create_app(settings: CameraSettings | AsiSettings, live_cfg: Live, system: System, snapshot: SnapshotSource,
                onvif: OnvifEndpoint | None = None, web_dir: Path | None = None,
                full: SnapshotSource | None = None, sky: Sky | None = None) -> FastAPI:
     app = FastAPI(title="SkyDome", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
@@ -226,21 +241,30 @@ def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapsho
         """Night stretch of the dome: black point, and k for 255·asinh(k·x)/asinh(k) (0 = off)."""
         return write_stretch(black, k)
 
-    @app.post("/api/preset/{name}")
-    def preset(name: str) -> dict:
-        """Night or Day in one go: camera settings for all five cameras, and the stretch."""
-        p = PRESETS.get(name)
-        if not p:
-            raise HTTPException(404, f"presets: {', '.join(PRESETS)}")
+    presets = ASI_PRESETS if isinstance(settings, AsiSettings) else PRESETS
+
+    def apply_preset(name: str) -> dict:
+        """Night or Day in one go: the camera settings, the stretch and the stack.
+        KeyError for an unknown name, ValueError for a setting out of range."""
+        p = presets[name]
         ctrls = settings.controls()
-        try:
-            settings.update({k: v for k, v in p["camera"].items() if k in ctrls})
-        except ValueError as e:
-            raise HTTPException(400, str(e))
+        settings.update({k: v for k, v in p["camera"].items() if k in ctrls})
         out = {"preset": name, "stretch": write_stretch(**p["stretch"])}
         if live_cfg.stack_file:
             out["stack"] = write_stack(p["stack"])   # also restarts the stack on the new settings
         return out
+
+    app.state.apply_preset = apply_preset   # sky.py switches them at dusk and dawn
+
+    @app.post("/api/preset/{name}")
+    def preset(name: str) -> dict:
+        """Night or Day in one go."""
+        if name not in presets:
+            raise HTTPException(404, f"presets: {', '.join(presets)}")
+        try:
+            return apply_preset(name)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     # ---- zoom (D-023) --------------------------------------------------------------
 
@@ -337,9 +361,10 @@ def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapsho
 
     @app.get("/api/raw.zip")
     def raw_zip() -> Response:
-        """Every pixel there is: each camera's latest frame exactly as it sent it
-        (3840 x 2160 JPEG, no stitching or re-encoding), zipped, with the
-        camera layout and alignment for reference."""
+        """Every pixel there is: each camera's latest frame, zipped, with the
+        camera layout and alignment for reference. A UVC camera's exactly as
+        it sent it (JPEG); the ZWO camera's luminance at 16 bits (PGM, linear
+        at night), before stitching or encoding (D-029)."""
         d = live_cfg.raw_dir
         stats = live.read_stats(live_cfg.stats_files)
         names = [n for n, c in ((stats or {}).get("cameras") or {}).items() if c.get("state") == "live"]
@@ -348,24 +373,28 @@ def create_app(settings: CameraSettings, live_cfg: Live, system: System, snapsho
         asked = time.time()
         (d / "request").touch()
         got: dict[str, Path] = {}
-        while time.time() - asked < 5 and len(got) < len(names):
+        # A ZWO night frame can take its whole exposure to arrive
+        exposure = max(((stats or {}).get("cameras") or {}).get(n, {}).get("exposure_us") or 0 for n in names) / 1e6
+        while time.time() - asked < 5 + 1.2 * exposure and len(got) < len(names):
             time.sleep(0.05)
             for n in names:
-                p = d / f"{n}.jpg"
-                if n not in got and p.exists() and p.stat().st_mtime >= asked - 0.01:
-                    got[n] = p
+                for ext in (".jpg", ".pgm"):
+                    p = d / f"{n}{ext}"
+                    if n not in got and p.exists() and p.stat().st_mtime >= asked - 0.01:
+                        got[n] = p
         if not got:
             raise HTTPException(503, "the cameras didn't send a frame in time")
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:   # JPEGs don't compress further
             for n, p in got.items():
-                z.write(p, f"{n}.jpg")
+                z.write(p, f"{n}{p.suffix}")
             for p in live_cfg.extra_files:
                 if p.exists():
                     z.write(p, p.name)
             z.writestr("README.txt", f"SkyDome raw frames, {stamp}\n"
-                       "Each camera's frame exactly as the camera sent it (MJPEG, 3840 x 2160).\n"
+                       "Each camera's frame: .jpg exactly as a UVC camera sent it; .pgm the ZWO camera's\n"
+                       "luminance at 16 bits (linear when its gamma is 100, as at night).\n"
                        f"Cameras: {', '.join(got)}"
                        + (f"; missing: {', '.join(sorted(set(names) - set(got)))}" if len(got) < len(names) else "")
                        + "\ncameras.yaml: which camera points where; extrinsics.yaml: how each is really\n"

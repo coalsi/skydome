@@ -64,6 +64,10 @@ _SLAVES = {"exposure_time_absolute": ("auto_exposure", AUTO_EXPOSURE_MANUAL),
 
 
 class CameraSettings:
+    # How ONVIF's exposure maps onto these controls: (exposure control, µs per
+    # unit, auto_exposure's automatic value, its manual value)
+    ONVIF_EXPOSURE = ("exposure_time_absolute", 100, AUTO_EXPOSURE_AUTO, AUTO_EXPOSURE_MANUAL)
+
     def __init__(self, path: Path, finder: Callable[[], list[CameraNode]] = find_cameras,
                  opener: Callable[[str], Device] = Device, log=print):
         self.path = Path(path)

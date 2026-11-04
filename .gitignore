@@ -11,3 +11,4 @@ dist/
 calib/
 var/
 pipeline/native/build/
+third_party/

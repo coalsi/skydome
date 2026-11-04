@@ -24,8 +24,8 @@ export function SkyPanel() {
         setStretch(r.stretch);
         if (r.stack !== undefined) setStack(r.stack);
         setNote(name === "night"
-          ? "Night: 1 s exposures stacked over 16 s, full gain, stars lifted. Give it ~16 s to build up."
-          : "Day: the cameras' automatic exposure, no stacking or stretch.");
+          ? "Night: long exposures, a few frames stacked, faint stars lifted. Give it a minute to build up."
+          : "Day: a normal picture, no stacking or stretch.");
       })
       .catch((e) => setNote(String(e.message ?? e)))
       .finally(() => setBusy(null));

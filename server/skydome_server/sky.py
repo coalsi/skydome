@@ -12,6 +12,12 @@ CPU), its progress in var/calibration.json. Automatic: once it's dark (the
 Sun 12° down) after every start of the server, then once a night; if the
 stars can't be matched (cloud) it tries again every 20 minutes until dawn.
 Off with var/calibration.auto containing "off".
+
+Night and Day (the ZWO camera, D-029): with apply_preset set and a
+preset_file that doesn't say "off", Night goes on once the Sun is 8° down
+and Day once it's back above 4° down (the gap keeps it from flapping), and
+whatever fits goes on at start-up. Picked by hand, a preset stays until the
+next dusk or dawn.
 """
 
 from __future__ import annotations
@@ -36,6 +42,8 @@ BUTTON_SUN_ALT = -6.0     # by hand: the bright stars are out
 RETRY_S = 20 * 60         # cloudy: try again
 NIGHTLY_S = 12 * 3600     # once a night
 CHECK_S = 60
+NIGHT_PRESET_SUN_ALT = -8.0   # Night below this
+DAY_PRESET_SUN_ALT = -4.0     # Day above this
 
 
 def _utc(t: datetime) -> str:
@@ -51,6 +59,9 @@ class Sky:
     auto_file: Path
     command: list[str]                       # the alignment, ending in --save --status <status_file>
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
+    preset_file: Path | None = None                     # Night/Day by the Sun unless this says "off"
+    apply_preset: Callable[[str], object] | None = field(default=None, repr=False)
+    _preset: str | None = field(default=None, repr=False)   # the last one switched to
     _cat: Catalogue | None = field(default=None, repr=False)
     _labels: list | None = field(default=None, repr=False)
     _cache: tuple = field(default=(0.0, None, None), repr=False)
@@ -153,8 +164,47 @@ class Sky:
             return "nightly"
         return None
 
+    # ---- Night and Day ------------------------------------------------------------
+
+    @property
+    def auto_presets(self) -> bool:
+        if self.preset_file is None or self.apply_preset is None:
+            return False
+        try:
+            return self.preset_file.read_text().strip().lower() != "off"
+        except OSError:
+            return True
+
+    def preset_due(self) -> str | None:
+        """The preset to switch to now, or None."""
+        if not self.auto_presets:
+            return None
+        sun = self.sun_alt()
+        if sun < NIGHT_PRESET_SUN_ALT and self._preset != "night":
+            return "night"
+        if sun > DAY_PRESET_SUN_ALT and self._preset != "day":
+            return "day"
+        if self._preset is None:   # start-up in the gap: whichever side of it we're nearer
+            return "night" if sun < (NIGHT_PRESET_SUN_ALT + DAY_PRESET_SUN_ALT) / 2 else "day"
+        return None
+
+    def switch_preset(self) -> None:
+        name = self.preset_due()
+        if name:
+            print(f"sky: {name} (Sun at {self.sun_alt():.1f}°)", file=sys.stderr, flush=True)
+            self.apply_preset(name)
+            self._preset = name
+
     def run_forever(self, stop: threading.Event) -> None:
+        try:
+            self.switch_preset()
+        except Exception as e:
+            print(f"preset switch failed: {e}", file=sys.stderr, flush=True)
         while not stop.wait(CHECK_S):
+            try:
+                self.switch_preset()
+            except Exception as e:
+                print(f"preset switch failed: {e}", file=sys.stderr, flush=True)
             try:
                 why = self.due()
                 if why:

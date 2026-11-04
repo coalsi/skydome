@@ -23,7 +23,7 @@ set(MMAPI /usr/src/jetson_multimedia_api CACHE PATH "Jetson Multimedia API")
 find_library(NVBUFSURFACE nvbufsurface PATHS /usr/lib/aarch64-linux-gnu/nvidia REQUIRED)
 
 # The CUDA kernel and table loader, free of GStreamer so nvcc stays happy
-add_library(skydome_stitch STATIC src/lut.cpp src/stitch.cu src/balance.cu src/stack.cu)
+add_library(skydome_stitch STATIC src/lut.cpp src/stitch.cu src/balance.cu src/stack.cu src/debayer.cu)
 target_include_directories(skydome_stitch PUBLIC src)
 target_link_libraries(skydome_stitch PUBLIC CUDA::cudart)
 target_compile_options(skydome_stitch PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3 --use_fast_math>)
@@ -32,6 +32,23 @@ add_executable(skydome-live src/main.cpp src/capture.cpp src/encoder.cpp src/jpe
 target_include_directories(skydome-live PRIVATE ${MMAPI}/include)
 target_link_libraries(skydome-live PRIVATE skydome_stitch PkgConfig::GST PkgConfig::EGL CUDA::cuda_driver ${NVBUFSURFACE})
 target_compile_options(skydome-live PRIVATE -Wall -Wextra -O2)
+
+# The ZWO all-sky camera (DECISIONS.md D-029), when tools/get_zwo_sdk.sh has fetched ZWO's SDK
+set(ZWO_SDK ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/zwo CACHE PATH "ZWO ASI SDK (tools/get_zwo_sdk.sh)")
+find_library(ASICAMERA2 ASICamera2 PATHS ${ZWO_SDK}/lib NO_DEFAULT_PATH)
+if(ASICAMERA2)
+  target_sources(skydome-live PRIVATE src/asi_source.cpp)
+  target_include_directories(skydome-live PRIVATE ${ZWO_SDK}/include)
+  target_compile_definitions(skydome-live PRIVATE SKYDOME_ASI=1)
+  target_link_libraries(skydome-live PRIVATE ${ASICAMERA2})
+  set_target_properties(skydome-live PROPERTIES BUILD_RPATH ${ZWO_SDK}/lib)
+  message(STATUS "ZWO camera support: ${ASICAMERA2}")
+else()
+  message(STATUS "ZWO camera support: off (no SDK in ${ZWO_SDK}; tools/get_zwo_sdk.sh)")
+endif()
+
+# Exposure ladder check (exposure.h), run by pipeline/tests/test_native_exposure.py
+add_executable(skydome-exposure-check src/exposure_check.cpp)
 
 add_executable(skydome-stitch-files src/stitch_files.cpp)
 target_link_libraries(skydome-stitch-files PRIVATE skydome_stitch)

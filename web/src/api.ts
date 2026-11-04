@@ -9,6 +9,13 @@ export interface CameraStats {
   damaged_dropped: number;
   // Brightness/colour matching to the neighbours (D-022): Y x gain, U/V shifted
   balance?: { gain: number; u: number; v: number };
+  // The ZWO camera (D-029): what the newest frame was taken with
+  camera?: string;
+  exposure_us?: number;
+  gain?: number; // 0.1 dB
+  auto_exposure?: boolean;
+  sky_level?: number; // the sky's median, 0..1 of full scale
+  temperature_c?: number;
 }
 
 export interface LiveStats {

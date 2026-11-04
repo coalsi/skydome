@@ -52,7 +52,7 @@ from skydome_pipeline.calibration import lens_to_dict  # noqa: E402
 from skydome_pipeline.camera import Camera  # noqa: E402
 from skydome_pipeline.config import calibrated_cameras, load_site  # noqa: E402
 from skydome_pipeline.geometry import vec_to_altaz  # noqa: E402
-from skydome_pipeline.stars import detect_stars, load_bsc, sky_stars, solve_rig, star_directions  # noqa: E402
+from skydome_pipeline.stars import detect_stars, load_bsc, sky_blocks, sky_stars, solve_rig, star_directions  # noqa: E402
 
 CALIB = ROOT / "config" / "calibration"
 LENS_OK = (40, 1.5)    # a lens fit is kept with at least this many stars and under this rms (px)
@@ -61,19 +61,42 @@ LENS_OK = (40, 1.5)    # a lens fit is kept with at least this many stars and un
 MIN_MOVE_DEG = 0.2
 
 
-def grab(url: str, frames: int) -> tuple[dict[str, np.ndarray], datetime]:
-    """Each live camera's raw frames, averaged, and the middle time."""
+def frame(data: bytes, name: str) -> np.ndarray:
+    """A raw download's picture as grey 0..255 floats: a UVC camera's JPEG, or
+    the ZWO camera's 16-bit luminance (.pgm, D-029), its precision kept."""
+    im = Image.open(io.BytesIO(data))
+    if name.endswith(".pgm"):
+        return np.asarray(im, np.float32) * (255.0 / 65535.0)
+    return np.asarray(im.convert("L"), np.float32)
+
+
+def grab(url: str, frames: int, wait_s: float = 0.0) -> tuple[dict[str, np.ndarray], datetime]:
+    """Each live camera's raw frames, averaged, and the middle time. wait_s
+    between downloads: the ZWO camera's night frames are seconds long, and
+    the same frame twice adds nothing."""
     acc: dict[str, list[np.ndarray]] = {}
     times = []
-    for _ in range(frames):
+    for i in range(frames):
+        if i and wait_s:
+            time.sleep(wait_s)
         t0 = time.time()
-        z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(url, timeout=30).read()))
+        z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(url, timeout=60).read()))
         times.append((t0 + time.time()) / 2)
         for n in z.namelist():
-            if n.endswith(".jpg"):
-                acc.setdefault(n[:-4], []).append(np.asarray(Image.open(io.BytesIO(z.read(n))).convert("L"), np.float32))
+            if n.endswith((".jpg", ".pgm")):
+                acc.setdefault(n[:-4], []).append(frame(z.read(n), n))
     t = datetime.fromtimestamp(float(np.median(times)), timezone.utc)
     return {n: np.mean(v, axis=0) for n, v in acc.items()}, t
+
+
+def exposure_s(status_url: str) -> float:
+    """The longest exposure among the live cameras (s), from the server's status; 1 if unknown."""
+    try:
+        with urllib.request.urlopen(status_url, timeout=5) as r:
+            cams = ((json.load(r).get("live") or {}).get("cameras") or {}).values()
+        return max((c.get("exposure_us") or 0) / 1e6 for c in cams) or 1.0
+    except (OSError, ValueError, AttributeError):
+        return 1.0
 
 
 def sky_shift_deg(old: Camera, new: Camera) -> float:
@@ -134,9 +157,13 @@ def run(args, say: Status) -> int:
                 for c in cams]
     say(f"catalogue: {len(cat.vmag)} stars; site {site.name} ({site.latitude_deg}, {site.longitude_deg}); "
         f"averaging {args.frames} frames")
-    images, t = grab(args.url, args.frames)
+    # Long night frames (the ZWO camera): a new one per download, and fewer of them
+    exp = exposure_s(args.url.replace("/api/raw.zip", "/api/status"))
+    frames = args.frames if exp <= 2 else max(2, min(args.frames, int(60 // exp) + 1))
+    images, t = grab(args.url, frames, wait_s=exp + 0.5 if exp > 1 else 0.0)
     dirs, mags = star_directions(cat, site.latitude_deg, site.longitude_deg, t)
-    dets = {c.name: sky_stars(images[c.name], detect_stars(images[c.name], sigma=4.5, max_stars=3000))
+    dets = {c.name: sky_stars(images[c.name], detect_stars(images[c.name], sigma=4.5, max_stars=3000),
+                              up=sky_blocks(c))
             for c in cams if c.name in images}
     for c in cams:
         if c.name not in images:

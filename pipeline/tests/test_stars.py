@@ -7,7 +7,7 @@ import numpy as np
 from skydome_pipeline.camera import Camera, FisheyeLens
 from skydome_pipeline.geometry import camera_rotation, rot_x, rot_z
 from skydome_pipeline.stars import (Catalogue, Detections, _precession, apparent_altaz, julian_date,
-                                    refraction_deg, solve_camera, solve_rig, sun_altaz)
+                                    refraction_deg, sky_blocks, sky_stars, solve_camera, solve_rig, sun_altaz)
 
 POLARIS = Catalogue(np.array([37.95456]), np.array([89.26411]), np.array([1.97]))   # J2000
 
@@ -115,3 +115,34 @@ def test_sun_is_up_at_noon_and_down_at_night_in_arizona():
     _, night = sun_altaz(33.63, -112.37, datetime(2026, 6, 22, 7, 0, tzinfo=timezone.utc))
     assert 78 < noon < 80.5            # 90 - 33.63 + 23.44 at the solstice, near local noon
     assert night < -20
+
+
+def test_an_all_sky_fisheye_keeps_stars_all_round_and_not_in_the_dark_corners():
+    # The ZWO camera (D-029): a 185° circle inside a square sensor, looking up.
+    # Its horizon is the circle, so the frame's bottom is sky, not ground
+    cam = Camera("sky", FisheyeLens.from_hfov(960, 960, 185), camera_rotation(0, 90))
+    up = sky_blocks(cam, block=48)
+    assert up[10, 10] and up[18, 10] and not up[0, 0] and not up[19, 19]
+    y = np.full((960, 960), 40.0, np.float32)
+    y[:150, :150] = y[-150:, -150:] = 2.0          # the dark corners outside the lens circle
+    pts = [(480, 480), (480, 880), (880, 480), (30, 30)]   # middle, bottom, right, a corner
+    for u, v in pts:
+        y[v - 1:v + 2, u - 1:u + 2] += 60
+    det = Detections(np.array([p[0] for p in pts], float), np.array([p[1] for p in pts], float),
+                     np.ones(4), np.full(4, 50.0))
+    kept = sky_stars(y, det, up=up)
+    assert sorted(zip(kept.u, kept.v)) == [(480, 480), (480, 880), (880, 480)]
+
+
+def test_the_zwo_cameras_16_bit_frame_keeps_its_precision():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "align_from_stars", Path(__file__).resolve().parents[2] / "tools" / "align_from_stars.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    pgm = b"P5\n3 1\n65535\n" + bytes([0, 0, 0x80, 0x00, 0xff, 0xff])   # 0, 32768, 65535, big-endian
+    y = tool.frame(pgm, "sky.pgm")
+    assert y.shape == (1, 3) and y.dtype == np.float32
+    assert np.allclose(y[0], [0, 32768 * 255 / 65535, 255], atol=1e-3)   # fractions of a level kept

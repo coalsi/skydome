@@ -155,6 +155,16 @@ def _box(y: np.ndarray, k: int) -> np.ndarray:
     return (c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]) / (k * k)
 
 
+def sky_blocks(cam, block: int = 48, min_alt_deg: float = 5.0) -> np.ndarray:
+    """For sky_stars(up=...): the blocks of cam's picture whose centre looks
+    at least min_alt_deg above the horizon."""
+    hb, wb = cam.height // block, cam.width // block
+    v, u = np.mgrid[0:hb, 0:wb]
+    d = cam.pixel_to_world((u.ravel() + 0.5) * block, (v.ravel() + 0.5) * block)
+    ok = np.isfinite(d).all(axis=1) & (d[:, 2] > np.sin(np.radians(min_alt_deg)))
+    return ok.reshape(hb, wb)
+
+
 def detect_stars(y: np.ndarray, sigma: float = 6.0, max_stars: int = 400, border: int = 12) -> Detections:
     """Point sources in a grey frame (stars, and hot pixels the matching ignores)."""
     y = y.astype(np.float32)
@@ -239,19 +249,26 @@ def _match(du, dv, cu, cv, tol):
 
 
 def sky_stars(y: np.ndarray, det: Detections, bottom: float = 0.8, block: int = 48, glare: float = 15.0,
-              inner: int = 2, outer: int = 9, min_core: float = 0.7) -> Detections:
-    """The detections that are stars: on dark sky (not glare, not the ground
-    in the bottom of the frame) and point-like (the light in a small core on
-    a quiet surround, unlike lit windows, trees and wires)."""
+              inner: int = 2, outer: int = 9, min_core: float = 0.7, up: np.ndarray | None = None) -> Detections:
+    """The detections that are stars: on dark sky (not glare, not the ground)
+    and point-like (the light in a small core on a quiet surround, unlike lit
+    windows, trees and wires). The ground: the bottom of the frame (a side
+    camera), or, given `up` (one flag per block: it sees the sky), outside
+    those blocks (a fisheye, whose horizon is a circle and corners are dark)."""
     y = y.astype(np.float32)
     H, W = y.shape
     hb, wb = H // block, W // block
     bg = np.median(y[:hb * block, :wb * block].reshape(hb, block, wb, block).transpose(0, 2, 1, 3)
                    .reshape(hb, wb, -1), axis=2)
-    sky = np.percentile(bg, 25)
     bi = np.clip((det.v // block).astype(int), 0, hb - 1)
     bj = np.clip((det.u // block).astype(int), 0, wb - 1)
-    keep = (bg[bi, bj] < sky + glare) & (det.v < bottom * H)
+    if up is None:
+        sky = np.percentile(bg, 25)
+        keep = (bg[bi, bj] < sky + glare) & (det.v < bottom * H)
+    else:
+        up = np.asarray(up, bool)[:hb, :wb]
+        sky = np.percentile(bg[up], 25) if up.any() else np.percentile(bg, 25)
+        keep = (bg[bi, bj] < sky + glare) & up[bi, bj]
     yy, xx = np.mgrid[-outer:outer + 1, -outer:outer + 1]
     rr = np.hypot(xx, yy)
     core, ring = rr <= inner + 0.5, rr > outer - 2.5

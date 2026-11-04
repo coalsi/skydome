@@ -18,12 +18,15 @@ a random password on the first run. ONVIF offers:
 
   * the Detail stream (rtsp://<jetson>:8554/dome, 5120² H.264 at 15 fps)
   * a full-resolution JPEG snapshot (skydome-live's hardware encoder)
-  * imaging settings for all five cameras together: exposure (auto/manual,
-    time, gain), brightness, contrast, saturation, sharpness, backlight
-    compensation and white balance (auto/manual)
+  * imaging settings: exposure (auto/manual, time, gain), and for UVC
+    cameras brightness, contrast, saturation, sharpness, backlight
+    compensation and white balance
 
-Camera settings from the page and from ONVIF are the same settings, kept in
-var/camera_settings.yaml and re-applied when a camera is replugged.
+Camera settings from the page and from ONVIF are the same settings: for the
+ZWO all-sky camera (D-029) var/asi_settings.yaml, which skydome-live
+rereads; for UVC cameras var/camera_settings.yaml, re-applied when a camera
+is replugged. With the ZWO camera, Night and Day switch by themselves at
+dusk and dawn (skydome_server/sky.py).
 """
 
 from __future__ import annotations
@@ -43,11 +46,12 @@ sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import uvicorn  # noqa: E402
-from run_live import (FULL_SNAPSHOT, HORIZON_FILE, MODE_FILE, MODES, RAW_DIR, SNAPSHOT, STATS_FILES,  # noqa: E402
-                      STACK_FILE, STRETCH_FILE, ZOOM_FILE)
-from skydome_pipeline.config import load_modes, load_site  # noqa: E402
+from run_live import (ASI_CAPS, ASI_SETTINGS, FULL_SNAPSHOT, HORIZON_FILE, MODE_FILE, MODES, RAW_DIR,  # noqa: E402
+                      SNAPSHOT, STATS_FILES, STACK_FILE, STRETCH_FILE, ZOOM_FILE)
+from skydome_pipeline.config import load_cameras, load_modes, load_site  # noqa: E402
 from skydome_server.app import Live, create_app  # noqa: E402
 from skydome_server.sky import Sky  # noqa: E402
+from skydome_server.asi_settings import AsiSettings  # noqa: E402
 from skydome_server.camera_settings import CameraSettings  # noqa: E402
 from skydome_server.net import interfaces  # noqa: E402
 from skydome_server.onvif.discovery import Discovery  # noqa: E402
@@ -112,7 +116,8 @@ def main() -> int:
     detail = MODES["detail"]
     stream = Stream(detail["size"], detail["fps"], detail["bitrate"], detail["path"])
     users = load_credentials(CREDENTIALS)
-    settings = CameraSettings(CAMERA_SETTINGS, log=log)
+    zwo = any((c.device or "").startswith("asi") for c in load_cameras(ROOT / "config").cameras)
+    settings = AsiSettings(ASI_SETTINGS, ASI_CAPS, log=log) if zwo else CameraSettings(CAMERA_SETTINGS, log=log)
     services = Services(ident, stream, settings, users, interfaces=interfaces, log=log)
     snapshot = SnapshotSource(Path(args.snapshot))
     live_cfg = Live(MODE_FILE, STATS_FILES, zoom_file=Path(ZOOM_FILE), horizon_file=HORIZON_FILE,
@@ -124,11 +129,13 @@ def main() -> int:
     sky = Sky(ROOT / "var" / "bsc5.dat", site.latitude_deg, site.longitude_deg, calibration,
               ROOT / "var" / "calibration.auto",
               [sys.executable, str(ROOT / "tools" / "align_from_stars.py"), "--save", "--status", str(calibration),
-               "--url", f"http://127.0.0.1:{args.port}/api/raw.zip"])
+               "--url", f"http://127.0.0.1:{args.port}/api/raw.zip"],
+              preset_file=ROOT / "var" / "preset.auto" if zwo else None)
     app = create_app(settings, live_cfg,
                      System(ROOT / "var"), snapshot,
                      onvif=OnvifEndpoint(services, UsernameTokenAuth(users), log=log), web_dir=WEB_DIST,
                      full=SnapshotSource(Path(FULL_SNAPSHOT), timeout=10, fresh=2), sky=sky)
+    sky.apply_preset = app.state.apply_preset   # Night at dusk, Day at dawn
     if not (WEB_DIST / "index.html").exists():
         log(f"{WEB_DIST} not built: the page says so; the API and ONVIF work")
 

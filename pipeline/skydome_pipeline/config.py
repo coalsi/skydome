@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .camera import Camera, FisheyeLens, PinholeLens
 from .geometry import camera_rotation
 
+# The 5-camera rig's names (D-001..D-028); the all-sky camera is one camera, "sky" (D-029)
 CAMERA_NAMES = ("zenith", "north", "east", "south", "west")
 
 
@@ -30,7 +31,11 @@ class Pointing(BaseModel):
 
 
 class CameraEntry(BaseModel):
-    name: Literal["zenith", "north", "east", "south", "west"]
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    # How skydome-live finds it: device "asi" (the first ZWO camera on USB) or
+    # "asi:PART-OF-NAME" for a ZWO camera (D-029); id_path, the physical USB
+    # port, for a UVC camera (never /dev/videoN)
+    device: str | None = None
     id_path: str | None = None
     pointing: Pointing
 
@@ -52,10 +57,10 @@ class CamerasConfig(BaseModel):
 
     @field_validator("cameras")
     @classmethod
-    def _five_unique(cls, v: list[CameraEntry]) -> list[CameraEntry]:
+    def _unique(cls, v: list[CameraEntry]) -> list[CameraEntry]:
         names = [c.name for c in v]
-        if sorted(names) != sorted(CAMERA_NAMES):
-            raise ValueError(f"need exactly one each of {CAMERA_NAMES}, got {names}")
+        if not names or len(set(names)) != len(names):
+            raise ValueError(f"need at least one camera, each with its own name; got {names}")
         return v
 
     def nominal_cameras(self) -> list[Camera]:

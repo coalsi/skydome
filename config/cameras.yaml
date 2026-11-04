@@ -1,41 +1,29 @@
-# The five cameras. Each is identified by its physical USB port (ID_PATH),
-# never by /dev/videoN. id_path is filled in on bring-up with
-# tools/identify_cameras.py, then tools/gen_udev_rules.py writes the udev
-# rules that create /dev/skycam-<name>.
+# The all-sky camera (DECISIONS.md D-029): one ZWO ASI676MC looking straight
+# up through a fisheye lens. (The 5-camera rig of D-001..D-028 is in git
+# history; the tools still take any number of cameras.)
 #
-# pointing is the NOMINAL orientation from the mount design. It is only the
-# starting guess: auto-align from the stars writes the real rotation to
-# config/calibration/extrinsics.yaml, which takes precedence.
+# device: how skydome-live finds it. "asi" is the first ZWO camera on USB;
+# "asi:PART-OF-NAME" picks one by name. A UVC camera gives its id_path (its
+# physical USB port, never /dev/videoN) instead.
+#
+# pointing is only the starting guess: the stars (tools/align_from_stars.py,
+# D-027/D-028) write the real rotation to config/calibration/extrinsics.yaml,
+# and fit the lens to config/calibration/<name>.yaml.
 #   az_deg   0 = north, 90 = east (clockwise seen from above)
-#   alt_deg  elevation above the horizon; the side cameras are printed at 30
-#            (mount tilt = 60, DECISIONS.md D-019)
-#   roll_deg rotation about the optical axis; 0 = image rows level with the
-#            horizon for the side cameras (see DECISIONS.md D-004)
+#   alt_deg  90 = straight up
+#   roll_deg rotation about the optical axis
 #
-# lens is the nominal model used until calibrate_intrinsics.py has produced
-# config/calibration/<name>.yaml.
+# lens is the nominal model until the stars have fitted one.
 
 sensor:
-  width: 3840
-  height: 2160
+  width: 3552             # ASI676MC, 2.0 µm pixels, 7.1 mm square
+  height: 3552
 
 lens:
-  hfov_deg: 120           # SVPRO L39 M12 lens, per the product listing
-  projection: equidistant  # equidistant | rectilinear - unknown until calibrated (DECISIONS.md F-4)
+  hfov_deg: 160           # the stock lens, a guess until the stars fit it (first clear night)
+  projection: equidistant
 
 cameras:
-  - name: zenith
-    id_path: platform-3610000.usb-usb-0:2:1.0
+  - name: sky
+    device: asi
     pointing: {az_deg: 0, alt_deg: 90, roll_deg: 0}
-  - name: north
-    id_path: platform-3610000.usb-usb-0:1.4:1.0
-    pointing: {az_deg: 0, alt_deg: 30, roll_deg: 0}
-  - name: east
-    id_path: platform-3610000.usb-usb-0:1.2:1.0
-    pointing: {az_deg: 90, alt_deg: 30, roll_deg: 0}
-  - name: south
-    id_path: platform-3610000.usb-usb-0:1.1:1.0
-    pointing: {az_deg: 180, alt_deg: 30, roll_deg: 0}
-  - name: west
-    id_path: platform-3610000.usb-usb-0:1.3:1.0
-    pointing: {az_deg: 270, alt_deg: 30, roll_deg: 0}

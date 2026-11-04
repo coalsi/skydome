@@ -19,7 +19,7 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo
 
-from ..camera_settings import AUTO_EXPOSURE_AUTO, AUTO_EXPOSURE_MANUAL, CameraSettings
+from ..camera_settings import CameraSettings
 from ..net import Interface
 from .soap import NS, Fault, child_text, invalid, not_supported, split_tag, xml_bool
 
@@ -35,7 +35,12 @@ PRE_AUTH = {"GetSystemDateAndTime", "GetCapabilities", "GetServices", "GetServic
 
 # ONVIF name -> V4L2 control, for the plain numeric imaging settings
 _LEVELS = (("Brightness", "brightness"), ("ColorSaturation", "saturation"), ("Contrast", "contrast"))
-_US_PER_UNIT = 100   # exposure_time_absolute counts 100 µs
+
+
+def _exposure_map(settings) -> tuple[str, int, int, int]:
+    """(exposure control, µs per unit, automatic, manual) for these settings:
+    the UVC cameras' or the ZWO camera's (D-029)."""
+    return getattr(settings, "ONVIF_EXPOSURE", CameraSettings.ONVIF_EXPOSURE)
 
 
 @dataclass
@@ -407,11 +412,11 @@ class Services:
         for onvif, v4l in _LEVELS:
             if v4l in ctrls:
                 out.append(f"<tt:{onvif}>{v[v4l]}</tt:{onvif}>")
+        exp, per, _, manual = _exposure_map(self.settings)
         if "auto_exposure" in ctrls:
-            mode = "MANUAL" if v["auto_exposure"] == AUTO_EXPOSURE_MANUAL else "AUTO"
+            mode = "MANUAL" if v["auto_exposure"] == manual else "AUTO"
             out.append(f"<tt:Exposure><tt:Mode>{mode}</tt:Mode>"
-                       + (f"<tt:ExposureTime>{v['exposure_time_absolute'] * _US_PER_UNIT}</tt:ExposureTime>"
-                          if "exposure_time_absolute" in ctrls else "")
+                       + (f"<tt:ExposureTime>{v[exp] * per}</tt:ExposureTime>" if exp in ctrls else "")
                        + (f"<tt:Gain>{v['gain']}</tt:Gain>" if "gain" in ctrls else "")
                        + "</tt:Exposure>")
         if "sharpness" in ctrls:
@@ -434,10 +439,11 @@ class Services:
             for onvif, v4l in _LEVELS:
                 if v4l in c:
                     out.append(f"<tt:{onvif}>{rng(c[v4l].minimum, c[v4l].maximum)}</tt:{onvif}>")
+            exp, per, _, _ = _exposure_map(self.settings)
             if "auto_exposure" in c:
                 out.append("<tt:Exposure><tt:Mode>AUTO</tt:Mode><tt:Mode>MANUAL</tt:Mode>"
-                           + (f"<tt:ExposureTime>{rng(c['exposure_time_absolute'].minimum * _US_PER_UNIT, c['exposure_time_absolute'].maximum * _US_PER_UNIT)}</tt:ExposureTime>"
-                              if "exposure_time_absolute" in c else "")
+                           + (f"<tt:ExposureTime>{rng(c[exp].minimum * per, c[exp].maximum * per)}</tt:ExposureTime>"
+                              if exp in c else "")
                            + (f"<tt:Gain>{rng(c['gain'].minimum, c['gain'].maximum)}</tt:Gain>" if "gain" in c else "")
                            + "</tt:Exposure>")
             if "sharpness" in c:
@@ -455,7 +461,7 @@ class Services:
             s = r.op.find("timg:ImagingSettings", NS)
             if s is None:
                 raise invalid("ter:SettingsInvalid", "no ImagingSettings")
-            changes = imaging_changes(s, self.settings.effective())
+            changes = imaging_changes(s, self.settings.effective(), _exposure_map(self.settings))
             if changes:
                 try:
                     self.settings.update(changes)
@@ -466,8 +472,11 @@ class Services:
         return self._with_source(body)(r)
 
 
-def imaging_changes(s: ET.Element, current: dict[str, int]) -> dict[str, int]:
-    """ONVIF ImagingSettings20 -> V4L2 control values (cameras' units)."""
+def imaging_changes(s: ET.Element, current: dict[str, int],
+                    exposure: tuple[str, int, int, int] = CameraSettings.ONVIF_EXPOSURE) -> dict[str, int]:
+    """ONVIF ImagingSettings20 -> control values in the cameras' units
+    (exposure: see _exposure_map)."""
+    exp, per, auto, manual = exposure
     changes: dict[str, int] = {}
 
     def num(path: str) -> int | None:
@@ -497,11 +506,11 @@ def imaging_changes(s: ET.Element, current: dict[str, int]) -> dict[str, int]:
     if mode is not None:
         if mode not in ("AUTO", "MANUAL"):
             raise invalid("ter:SettingsInvalid", f"exposure mode {mode!r}")
-        changes["auto_exposure"] = AUTO_EXPOSURE_MANUAL if mode == "MANUAL" else AUTO_EXPOSURE_AUTO
+        changes["auto_exposure"] = manual if mode == "MANUAL" else auto
     t = child_text(s, "tt:Exposure/tt:ExposureTime")
     if t is not None:
         try:
-            changes["exposure_time_absolute"] = max(1, round(float(t) / _US_PER_UNIT))
+            changes[exp] = max(1, round(float(t) / per))
         except ValueError:
             raise invalid("ter:SettingsInvalid", f"exposure time {t!r} is not a number") from None
     gain = num("tt:Exposure/tt:Gain")

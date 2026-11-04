@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start the live dome (Phase 1): cameras -> GPU stitch -> H.264 -> mediamtx.
+"""Start the live dome (Phase 1): camera(s) -> GPU stitch -> H.264 -> mediamtx.
 
     uv run --project pipeline tools/run_live.py                 # follows the web page's mode
     uv run --project pipeline tools/run_live.py --mode smooth   # fixed: 2048² × 30
@@ -20,10 +20,14 @@ rtsp://skydome.local:8554/dome. Needs mediamtx running
 
     cmake -S pipeline/native -B pipeline/native/build && cmake --build pipeline/native/build -j
 
-Cameras are found as /dev/skycam-<name> (udev rules from
-tools/gen_udev_rules.py), else by the id_path in config/cameras.yaml, else
-from --camera NAME=DEVICE. A camera with an id_path that isn't plugged in
-yet is waited for: skydome-live picks it up when it appears. Rebuilds
+The all-sky camera (D-029) is a ZWO camera: `device: asi` in
+config/cameras.yaml, opened through ZWO's SDK (tools/get_zwo_sdk.sh); its
+picture settings are var/asi_settings.yaml (the web page writes them) and
+it reports its control ranges to var/asi_caps.json. UVC cameras (the
+5-camera rig) are found as /dev/skycam-<name> (udev rules from
+tools/gen_udev_rules.py), else by their id_path, else from --camera
+NAME=DEVICE. A camera that isn't plugged in yet is waited for: skydome-live
+picks it up when it appears. Rebuilds
 var/stitch_<size>.lut when the camera config or a lens calibration is newer,
 at start and while running (a new alignment from the stars, D-028).
 Stills for ONVIF's GetSnapshotUri go to --snapshot when asked for
@@ -63,6 +67,8 @@ HORIZON_FILE = ROOT / "var" / "horizon.txt"   # ground mask (tools/detect_horizo
 RAW_DIR = Path("/tmp/skydome-raw")         # each camera's frame as sent, on request (the raw download)
 STRETCH_FILE = ROOT / "var" / "stretch.txt"  # night stretch "black k" from the web page (D-025)
 STACK_FILE = ROOT / "var" / "stack.txt"      # stacking depth in frames (D-026)
+ASI_SETTINGS = ROOT / "var" / "asi_settings.yaml"   # the ZWO camera's picture settings (D-029)
+ASI_CAPS = ROOT / "var" / "asi_caps.json"           # its control ranges, written when it opens
 # The Jetson's USB-C port often misses a camera that's plugged in at power-on
 # (the zenith camera, 3 cold starts out of 4 on 2026-11-03); switching the
 # port out of host mode and back finds it, like replugging it
@@ -86,6 +92,9 @@ def find_devices(overrides: dict[str, str]) -> dict[str, str]:
     for cam in cfg.cameras:
         if cam.name in overrides:
             found[cam.name] = overrides[cam.name]
+            continue
+        if cam.device:   # a ZWO camera ("asi"): skydome-live finds it on USB itself
+            found[cam.name] = cam.device
             continue
         link = Path(f"/dev/skycam-{cam.name}")
         by_path = Path(f"/dev/v4l/by-path/{cam.id_path}-video-index0") if cam.id_path else None
@@ -119,7 +128,7 @@ def launch(mode_name: str, devices: dict[str, str], args, extra: list[str]) -> s
            "--full-lut", str(lut_path(FULL_SIZE)), "--full-snapshot", FULL_SNAPSHOT,
            "--zoom-file", ZOOM_FILE, "--zoom-size", f"{ZOOM_SIZE[0]}x{ZOOM_SIZE[1]}",
            "--horizon", str(HORIZON_FILE), "--raw-dir", str(RAW_DIR), "--stretch", str(STRETCH_FILE),
-           "--stack", str(STACK_FILE)]
+           "--stack", str(STACK_FILE), "--asi-settings", str(ASI_SETTINGS), "--asi-caps", str(ASI_CAPS)]
     RAW_DIR.mkdir(exist_ok=True)
     for name, dev in devices.items():
         cmd += ["--camera", f"{name}={dev}"]
@@ -187,7 +196,7 @@ def main() -> int:
         proc = launch(current, devices, args, extra)
         started, kicks, stale_since = time.monotonic(), 0, None
         while not quit_.wait(1.0):
-            missing = [n for n, d in devices.items() if not Path(d).exists()]
+            missing = [n for n, d in devices.items() if d.startswith("/") and not Path(d).exists()]
             if missing and kicks < KICKS and time.monotonic() - started > KICK_AFTER_S + kicks * KICK_EVERY_S:
                 kicks += 1
                 ok = kick_usb_c()

@@ -1,11 +1,14 @@
-// skydome-live: five cameras -> one live dome stream (handoff §4, Phase 1).
+// skydome-live: the cameras -> one live dome stream (handoff §4, Phase 1).
 //
+//   skydome-live --lut var/stitch_5120.lut --camera sky=asi [options]
 //   skydome-live --lut var/stitch_5120.lut --camera zenith=/dev/skycam-zenith ... [options]
 //
 // Normally started by tools/run_live.py, which builds the table and finds
-// the cameras. Each output tick takes the newest frame from every camera,
-// stitches them on the GPU and hands the dome to the encoder. A camera
-// without a frame is left out; the dome keeps running on the rest.
+// the cameras: one ZWO all-sky camera (DECISIONS.md D-029; the "stitch" is
+// then just the fisheye turned into the dome) or UVC cameras (the 5-camera
+// rig). Each output tick takes the newest frame from every camera, stitches
+// them on the GPU and hands the dome to the encoder. A camera without a
+// frame is left out; the dome keeps running on the rest.
 //
 // On the side (DECISIONS.md D-023): full-detail stills from a bigger table
 // on request, a zoom stream of whatever part of the dome the web page is
@@ -35,6 +38,9 @@
 #include "snapshot.h"
 #include "stack.h"
 #include "stitch.h"
+#ifdef SKYDOME_ASI
+#include "asi_source.h"
+#endif
 
 namespace {
 
@@ -57,6 +63,7 @@ struct Options {
     std::string raw_dir;                   // raw camera frames on request
     std::string stretch;                   // night stretch file: "black k"
     std::string stack;                     // stacking depth file: "frames" (0 or 1 = off)
+    std::string asi_settings, asi_caps;    // ZWO camera: picture settings in, control ranges out
 };
 
 // A request older than this means nobody is zoomed in any more; the zoom
@@ -97,6 +104,7 @@ std::vector<float> read_horizon(const std::string& path) {
 void usage() {
     std::fprintf(stderr,
                  "usage: skydome-live --lut FILE --camera NAME=DEVICE [--camera ...]\n"
+                 "  DEVICE               a V4L2 device (UVC camera), or asi / asi:PART-OF-NAME for a ZWO camera\n"
                  "  --fps N              output frame rate (default 15)\n"
                  "  --capture WxH@FPS    camera mode (default 3840x2160@15)\n"
                  "  --format mjpeg|yuyv  camera format (default mjpeg; yuyv only up to 1080p)\n"
@@ -117,7 +125,9 @@ void usage() {
                  "  --stretch FILE       night stretch \"black k\" (k 0 = off); reread when it changes\n"
                  "  --stack FILE         stack each camera's last N frames (\"N\"; 0/1 = off); reread when it changes\n"
                  "  --raw-dir DIR        when DIR/request appears, save each camera's next frame as sent\n"
-                 "                       (DIR/<camera>.jpg)\n");
+                 "                       (DIR/<camera>.jpg, or .pgm from a ZWO camera)\n"
+                 "  --asi-settings FILE  ZWO camera picture settings (key: value lines); reread when it changes\n"
+                 "  --asi-caps FILE      write the ZWO camera's control ranges here when it opens (JSON)\n");
 }
 
 Options parse(int argc, char** argv) {
@@ -163,6 +173,8 @@ Options parse(int argc, char** argv) {
         else if (a == "--raw-dir") o.raw_dir = next();
         else if (a == "--stretch") o.stretch = next();
         else if (a == "--stack") o.stack = next();
+        else if (a == "--asi-settings") o.asi_settings = next();
+        else if (a == "--asi-caps") o.asi_caps = next();
         else if (a == "-h" || a == "--help") {
             usage();
             std::exit(0);
@@ -184,7 +196,18 @@ struct Stats {
     double stitch_ms = 0, stitch_ms_max = 0;
 };
 
-void report(const Options& o, std::vector<std::unique_ptr<CameraSource>>& cams, const Encoder& enc,
+bool is_asi(const std::string& device) { return device == "asi" || device.rfind("asi:", 0) == 0; }
+
+std::unique_ptr<FrameSource> make_source(const Options& o, const std::string& name, const std::string& dev) {
+    if (!is_asi(dev)) return std::make_unique<CameraSource>(name, dev, o.capture);
+#ifdef SKYDOME_ASI
+    return std::make_unique<AsiSource>(name, dev.size() > 4 ? dev.substr(4) : "", o.asi_settings, o.asi_caps);
+#else
+    throw std::runtime_error("built without ZWO's SDK: run tools/get_zwo_sdk.sh, then rebuild");
+#endif
+}
+
+void report(const Options& o, std::vector<std::unique_ptr<FrameSource>>& cams, const Encoder& enc,
             const PhotoBalance* balance, const std::string& extra, Stats& st, Clock::time_point now) {
     const double secs = std::chrono::duration<double>(now - st.since).count();
     const double out_fps = st.out_frames / secs;
@@ -203,7 +226,7 @@ void report(const Options& o, std::vector<std::unique_ptr<CameraSource>>& cams, 
     bool first = true;
     for (auto& cp : cams) {
         if (!cp) continue;
-        CameraSource& c = *cp;
+        FrameSource& c = *cp;
         const double fps = c.take_frame_count() / secs;
         const uint64_t dropped = c.take_dropped();
         std::snprintf(buf, sizeof buf, " %s %.1f %s%s", c.name().c_str(), fps, c.state(),
@@ -211,7 +234,7 @@ void report(const Options& o, std::vector<std::unique_ptr<CameraSource>>& cams, 
         line += buf;
         json += (first ? "" : ",") + std::string("\"") + c.name() + "\":{\"fps\":" + std::to_string(fps) +
                 ",\"state\":\"" + c.state() + "\",\"restarts\":" + std::to_string(c.restarts()) +
-                ",\"damaged_dropped\":" + std::to_string(dropped);
+                ",\"damaged_dropped\":" + std::to_string(dropped) + c.stats_json();
         if (balance) {
             const CamCorrection& k = balance->corrections()[&cp - cams.data()];
             json += ",\"balance\":{\"gain\":" + std::to_string(k.gain) + ",\"u\":" + std::to_string(k.u) +
@@ -242,7 +265,7 @@ int run(int argc, char** argv) {
     const GridLut lut = GridLut::load(o.lut);
     GpuStitcher stitcher(lut);
     std::unique_ptr<PhotoBalance> balance;
-    if (o.balance) {
+    if (o.balance && lut.cams.size() > 1) {   // one camera has nothing to match
         balance = std::make_unique<PhotoBalance>(lut);
         std::fprintf(stderr, "balance: %d overlap points\n", balance->samples());
     }
@@ -250,11 +273,11 @@ int run(int argc, char** argv) {
     ec.width = ec.height = lut.size;
 
     // Table order; cameras not given on the command line stay null (missing)
-    std::vector<std::unique_ptr<CameraSource>> cams(lut.cams.size());
+    std::vector<std::unique_ptr<FrameSource>> cams(lut.cams.size());
     for (const auto& [name, dev] : o.cameras) {
         const int c = lut.camera_index(name);
         if (c < 0) throw std::runtime_error("camera " + name + " is not in " + o.lut);
-        cams[c] = std::make_unique<CameraSource>(name, dev, o.capture);
+        cams[c] = make_source(o, name, dev);
     }
     FramePool pool(lut.size, lut.size, 4);
     Encoder enc(ec);
@@ -362,7 +385,7 @@ int run(int argc, char** argv) {
             if (!o.raw_dir.empty() && mtime(o.raw_dir + "/request")) {
                 std::remove((o.raw_dir + "/request").c_str());
                 for (auto& c : cams)
-                    if (c) c->request_raw(o.raw_dir + "/" + c->name() + ".jpg");
+                    if (c) c->request_raw(o.raw_dir + "/" + c->name());
             }
             if (!o.zoom_file.empty()) {
                 const time_t m = mtime(o.zoom_file);

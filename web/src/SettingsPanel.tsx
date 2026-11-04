@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Control } from "./api";
 
-// How each V4L2 control is shown. Units are the cameras' own (exposure counts 100 µs)
+// How each control is shown: the ZWO all-sky camera's (D-029; units in the names, gains in 0.1 dB),
+// and the picture controls UVC cameras have (their own units)
 type Kind = "slider" | "log" | "toggle" | "select";
 interface Meta {
   label: string;
@@ -14,8 +15,22 @@ interface Meta {
   needsOff?: string; // only adjustable while this toggle is off
 }
 
+const us = (v: number) => (v >= 1e6 ? `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)} s` : `${(v / 1000).toFixed(v < 1e4 ? 2 : 0)} ms`);
+const dB = (v: number) => `${(v / 10).toFixed(1)} dB`;
+const times = (v: number) => `×${(v / 100).toFixed(2)}`;
+
 const META: Record<string, Meta> = {
-  auto_exposure: { label: "Auto exposure", group: "Exposure", kind: "toggle", on: 3, off: 1 },
+  // On/off are the ZWO camera's 1/0; a UVC camera's 3/1 is picked up from its range (metaFor)
+  auto_exposure: { label: "Auto exposure", group: "Exposure", kind: "toggle", on: 1, off: 0 },
+  exposure_us: { label: "Exposure time", group: "Exposure", kind: "log", needsOff: "auto_exposure", fmt: us },
+  auto_max_exposure_ms: {
+    label: "Longest exposure at night", group: "Exposure", kind: "log", fmt: (v) => us(v * 1000),
+  },
+  auto_max_gain: { label: "Most gain at night", group: "Exposure", fmt: dB },
+  auto_target: { label: "Sky brightness to aim for", group: "Exposure", fmt: (v) => `${v}%` },
+  wb_red: { label: "Red", group: "Colour", fmt: times },
+  wb_blue: { label: "Blue", group: "Colour", fmt: times },
+  offset: { label: "Black level", group: "Picture" },
   exposure_time_absolute: {
     label: "Exposure time", group: "Exposure", kind: "log", needsOff: "auto_exposure",
     fmt: (v) => (v >= 10000 ? "1 s" : `${(v / 10).toFixed(v < 100 ? 1 : 0)} ms`),
@@ -23,7 +38,7 @@ const META: Record<string, Meta> = {
   exposure_dynamic_framerate: {
     label: "Slow down for long exposures", group: "Exposure", kind: "toggle", on: 1, off: 0,
   },
-  gain: { label: "Gain", group: "Exposure" },
+  gain: { label: "Gain", group: "Exposure", needsOff: "auto_exposure", fmt: dB },
   backlight_compensation: { label: "Backlight compensation", group: "Exposure" },
   white_balance_automatic: { label: "Auto white balance", group: "Colour", kind: "toggle", on: 1, off: 0 },
   white_balance_temperature: {
@@ -33,7 +48,7 @@ const META: Record<string, Meta> = {
   hue: { label: "Hue", group: "Colour" },
   brightness: { label: "Brightness", group: "Picture" },
   contrast: { label: "Contrast", group: "Picture" },
-  gamma: { label: "Gamma", group: "Picture" },
+  gamma: { label: "Gamma", group: "Picture", fmt: (v) => (v / 100).toFixed(2) },
   sharpness: { label: "Sharpness", group: "Picture" },
   power_line_frequency: {
     label: "Mains flicker", group: "Picture", kind: "select",
@@ -43,6 +58,12 @@ const META: Record<string, Meta> = {
 const GROUPS = ["Exposure", "Colour", "Picture"] as const;
 const KNOWN = Object.keys(META);
 const order = (name: string) => (KNOWN.includes(name) ? KNOWN.indexOf(name) : KNOWN.length);
+// A UVC camera's auto_exposure runs 1 (manual) to 3 (auto); its exposure and gain aren't the ZWO's
+const metaFor = (c: Control): Meta => {
+  if (c.name === "auto_exposure" && c.max > 1) return { ...META.auto_exposure, on: 3, off: 1 };
+  if (c.name === "gain" && c.max < 300) return { label: "Gain", group: "Exposure" };
+  return META[c.name];
+};
 
 export function SettingsPanel() {
   const [controls, setControls] = useState<Control[] | null>(null);
@@ -83,13 +104,13 @@ export function SettingsPanel() {
 
   if (!controls) return <p className="text-sm text-muted">{error ?? "Loading camera settings…"}</p>;
   const byName = Object.fromEntries(controls.map((c) => [c.name, c]));
-  const isOn = (name: string) => byName[name] && byName[name].value === META[name].on;
+  const isOn = (name: string) => byName[name] && byName[name].value === metaFor(byName[name]).on;
 
   return (
     <div className="space-y-5">
       <p className="text-xs leading-relaxed text-muted">
-        These apply to all five cameras together, are kept across restarts, and are the same settings an NVR changes
-        over ONVIF.
+        Kept across restarts, and the same settings an NVR changes over ONVIF. Night and Day (Sky tab) set these for
+        you at dusk and dawn.
       </p>
       {error && <p className="rounded-md bg-bad/10 px-3 py-2 text-xs text-bad ring-1 ring-bad/30">{error}</p>}
       {GROUPS.map((group) => {
@@ -105,8 +126,8 @@ export function SettingsPanel() {
                 <ControlRow
                   key={c.name}
                   c={c}
-                  meta={META[c.name]}
-                  disabled={!!META[c.name]?.needsOff && !!isOn(META[c.name].needsOff!)}
+                  meta={metaFor(c)}
+                  disabled={!!metaFor(c).needsOff && !!isOn(metaFor(c).needsOff!)}
                   onChange={(v) => change(c.name, v)}
                 />
               ))}
@@ -160,7 +181,7 @@ function ControlRow({ c, meta, disabled, onChange }: {
     );
   }
 
-  // Exposure spans 0.1 ms to 1 s: a log slider gives each decade the same room
+  // Exposure spans tens of µs to many seconds: a log slider gives each decade the same room
   const log = kind === "log";
   const lo = Math.log(Math.max(1, c.min));
   const hi = Math.log(c.max);

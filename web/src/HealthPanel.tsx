@@ -1,6 +1,6 @@
-import type { Status } from "./api";
+import type { CameraStats, Status } from "./api";
 
-const ORDER = ["zenith", "north", "east", "south", "west"];
+const ORDER = ["sky", "zenith", "north", "east", "south", "west"];
 
 export function HealthPanel({ status }: { status: Status | null }) {
   if (!status) return <p className="text-sm text-muted">Waiting for the server…</p>;
@@ -8,6 +8,9 @@ export function HealthPanel({ status }: { status: Status | null }) {
   const sys = status.system;
   const target = status.mode === "smooth" ? 30 : 15;
   const cams = live ? Object.entries(live.cameras).sort(([a], [b]) => ORDER.indexOf(a) - ORDER.indexOf(b)) : [];
+  // A camera on long exposures sends a frame per exposure: judge its rate by that
+  const camTarget = (c: CameraStats) => (c.exposure_us ? Math.min(target, 1e6 / c.exposure_us) : target);
+  const zwo = cams.find(([, c]) => c.exposure_us !== undefined)?.[1];
   const temps = Object.entries(sys.temps_c).filter(([n]) => ["cpu", "gpu", "tj", "soc0"].includes(n));
   const hottest = Math.max(...Object.values(sys.temps_c), 0);
 
@@ -43,7 +46,7 @@ export function HealthPanel({ status }: { status: Status | null }) {
                       <span className="capitalize">{name}</span>
                       {c.state !== "live" && <span className="ml-1.5 text-xs text-bad">{c.state}</span>}
                     </td>
-                    <td className={`text-right ${toneText(c.fps, target)}`}>{c.fps.toFixed(1)}</td>
+                    <td className={`text-right ${toneText(c.fps, camTarget(c))}`}>{c.fps.toFixed(c.fps < 1 ? 2 : 1)}</td>
                     <td className="text-right text-muted"
                       title={c.balance ? `colour shift U ${c.balance.u.toFixed(1)}, V ${c.balance.v.toFixed(1)}` : "off"}>
                       {c.balance ? `×${c.balance.gain.toFixed(2)}` : "–"}
@@ -54,6 +57,16 @@ export function HealthPanel({ status }: { status: Status | null }) {
                 ))}
               </tbody>
             </table>
+            {zwo && (
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                <Stat label={zwo.auto_exposure ? "Exposure (auto)" : "Exposure"} value={exposure(zwo.exposure_us!)} />
+                <Stat label="Gain" value={`${((zwo.gain ?? 0) / 10).toFixed(1)} dB`} />
+                <Stat label="Sky level" value={`${((zwo.sky_level ?? 0) * 100).toFixed(0)}%`}
+                  tone={(zwo.sky_level ?? 0) > 0.8 ? "warn" : undefined} />
+                <Stat label="Sensor" value={`${(zwo.temperature_c ?? 0).toFixed(0)} °C`}
+                  tone={(zwo.temperature_c ?? 0) >= 50 ? "warn" : undefined} />
+              </div>
+            )}
             {live.encoder !== "running" && <p className="mt-2 text-xs text-bad">Encoder: {live.encoder}</p>}
             {live.balance_points !== undefined && (
               <p className="mt-2 text-xs leading-relaxed text-muted">
@@ -110,4 +123,8 @@ function duration(s: number) {
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+
+function exposure(us: number) {
+  return us >= 1e6 ? `${(us / 1e6).toFixed(us >= 1e7 ? 0 : 1)} s` : `${(us / 1000).toFixed(us < 1e4 ? 2 : 0)} ms`;
 }

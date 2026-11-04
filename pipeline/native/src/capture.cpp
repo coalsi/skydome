@@ -68,9 +68,9 @@ GstPadProbeReturn CameraSource::check_frame(GstPad*, GstPadProbeInfo* info, gpoi
     return GST_PAD_PROBE_DROP;
 }
 
-void CameraSource::request_raw(const std::string& path) {
+void CameraSource::request_raw(const std::string& base) {
     if (fmt_.kind != CaptureFormat::Kind::MJPEG || raw_wanted_.load()) return;
-    raw_path_ = path;
+    raw_path_ = base + ".jpg";
     raw_wanted_.store(true);
 }
 

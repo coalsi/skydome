@@ -4,8 +4,10 @@
 
 namespace {
 
-// acc += alpha * (frame - acc); alpha = 1 copies (the first frame)
-__global__ void blend_kernel(float* acc, int w, int h, const uint8_t* src, int spitch, float alpha) {
+// acc += alpha * (frame - acc); alpha = 1 copies (the first frame). The
+// frame is 8-bit from the UVC cameras, float from the ZWO camera (its 12 bits)
+template <typename T>
+__global__ void blend_kernel(float* acc, int w, int h, const T* src, int spitch, float alpha) {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= w || y >= h) return;
@@ -43,7 +45,10 @@ void Stacker::add(int ci, const PlanarImage& frame, int depth, cudaStream_t stre
     const dim3 block(32, 8);
     for (int k = 0; k < 3; ++k) {
         const dim3 grid((c.w[k] + block.x - 1) / block.x, (c.h[k] + block.y - 1) / block.y);
-        blend_kernel<<<grid, block, 0, stream>>>(c.p[k], c.w[k], c.h[k], frame.plane[k], frame.pitch[k], alpha);
+        if (frame.fplane[k])
+            blend_kernel<<<grid, block, 0, stream>>>(c.p[k], c.w[k], c.h[k], frame.fplane[k], frame.fpitch[k], alpha);
+        else
+            blend_kernel<<<grid, block, 0, stream>>>(c.p[k], c.w[k], c.h[k], frame.plane[k], frame.pitch[k], alpha);
     }
     cuda_check(cudaGetLastError(), "stack kernel launch");
     cuda_check(cudaStreamSynchronize(stream), "stack");   // the camera's frame is released at its next poll

@@ -145,3 +145,41 @@ with the USB stick removed, and never cut power while it says Updating.
 
 Next (cameras): `tools/bringup/phase0.sh --gst`, then camera
 identification and udev names (`docs/camera-day.md`).
+
+## H · The ZWO all-sky camera (about 15 min, DECISIONS.md D-029)
+
+The five UVC cameras above are retired; section G's quirk only matters for
+them and does no harm left in. The all-sky camera is a ZWO ASI676MC on a
+**USB 3** port (the blue one; at USB 2 its 16-bit frames crawl).
+
+23. Fetch ZWO's camera SDK (about 110 MB download; only its 64-bit ARM
+    library and header are kept, in `third_party/zwo`, outside git):
+
+    ```bash
+    cd ~/skydome && tools/get_zwo_sdk.sh
+    ```
+
+24. ZWO's udev rule, once: it lets the camera be opened without root and
+    gives USB 200 MB of buffers. Then unplug and replug the camera:
+
+    ```bash
+    sudo install -m 644 ~/skydome/third_party/zwo/asi.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+    ```
+
+    `cat /sys/module/usbcore/parameters/usbfs_memory_mb` should then say 200.
+
+25. Rebuild the live dome; cmake should say "ZWO camera support:" with the
+    library's path:
+
+    ```bash
+    cd ~/skydome && cmake -S pipeline/native -B pipeline/native/build && cmake --build pipeline/native/build -j
+    sudo systemctl restart skydome-live skydome-server
+    ```
+
+26. Checks: `var/asi_caps.json` appears with the camera's name and size
+    (3552 × 3552, the same as `config/cameras.yaml`'s sensor), the web
+    page's Health tab shows the exposure, gain, sky level and sensor
+    temperature, and the dome shows the sky. Then: focus by day on
+    something far away, and on the first clear night press "Calibrate from
+    the stars" (it fits the lens and finds north), and set the white
+    balance and the night stretch.

@@ -895,3 +895,64 @@ should find north and the stars by itself, from the view.
   turning on the spot but not a new spot (redo it in daylight).
 
 ---
+
+### D-029 · One all-sky camera: a ZWO ASI676MC instead of the five UVC cameras (owner, 2026-11-04)
+The owner compared the rig with an Annke security camera that shows far more
+stars, and decided to return the five SVPRO cameras and use one astronomy
+camera: a **ZWO ASI676MC** (Sony IMX676, 3552 × 3552 square, 2.0 µm pixels,
+12-bit, USB 3, powered from the Jetson) with a 180° fisheye, starting with
+its stock lens.
+* **Why:** the UVC cameras stop at 1 s, give 8-bit MJPEG through an image
+  processor that crushes the faint end (contrast > 73 clipped the sky to 3
+  of 255, D-025), and fast wide M12 lenses for their 1/1.8" sensor barely
+  exist. The Annke (Hikvision I91ET) gets its stars at 1/30 s from an f/1.0
+  lens and heavy noise smoothing. An astronomy camera takes 20 s and longer
+  frames in clean 12-bit raw, and a square sensor fits the fisheye's circle.
+  One camera also removes the seams, the camera matching and five USB
+  links. It costs detail: ~16-19 px/° across the dome depending on the lens
+  (the rig's cameras were ~35), about a 4K dome master.
+* **Capture** (`pipeline/native/src/asi_source.*`): ZWO's SDK
+  (`tools/get_zwo_sdk.sh` fetches V1.41 into `third_party/zwo`, not in git;
+  MIT-style licence) in video mode, 16-bit raw, on its own thread (a night
+  frame takes 20 s); the newest frame is demosaicked on the GPU
+  (`debayer.cu`: bilinear, white balance, display gamma, full-range BT.601)
+  into float planes the stitch and the stack read, so the 12 bits reach the
+  night stretch, plus 8-bit copies. Reopens by itself if the camera drops
+  off USB. `config/cameras.yaml` has one camera, `sky`, `device: asi`.
+  The stitch is unchanged: with one camera it's the fisheye turned into
+  the dome; camera matching (D-022) is off with one camera.
+* **Exposure** (`exposure.h`): the camera's own automatic exposure, one
+  index (µs × linear gain) along a ladder: exposure to 1/15 s at gain 0
+  (daylight, smooth video), then gain to 20 dB at 1/15 s (twilight), then
+  exposure to 20 s at 20 dB (night). Each frame moves it 60% of the way to
+  the sky's median at 18% of full scale, never more than 8× at once; a
+  long frame on its way is abandoned when a much shorter one is wanted
+  (dawn). Manual exposure and gain from the page or ONVIF.
+* **Settings:** skydome-live owns the camera, so the server writes
+  `var/asi_settings.yaml` (`skydome_server/asi_settings.py`; exposure,
+  gain, the automatic limits and target, black level, red/blue balance,
+  gamma, USB bandwidth, flip) and skydome-live rereads it within a second;
+  the camera's own ranges go to `var/asi_caps.json` when it opens. ONVIF
+  maps its exposure (µs) straight on. White balance (red ×1.8, blue ×1.6)
+  is a guess until first light.
+* **Night and Day by themselves:** the presets now only change how the
+  picture is shown (Night: gamma 1, the stretch, 3 frames stacked, about a
+  minute of light; Day: gamma 2.2, no stretch or stack) and the server
+  switches them when the Sun passes 8° down (Night) and 4° down (Day);
+  `var/preset.auto` "off" stops it. The Night stretch (black 38, k 20) is
+  a first guess for a sky held at 18%: tune it on the first clear night.
+* **Stars:** the alignment reads the camera's 16-bit luminance from the
+  raw download (`.pgm`, linear at night), downloads a new frame per
+  exposure, and keeps stars only where the camera sees 5° or more above the
+  horizon (`sky_blocks`), since a fisheye's horizon is a circle and its
+  corners are dark (the rig's "bottom 20% is ground" rule doesn't apply).
+  The first clear night fits the lens (starting from 160° equidistant) and
+  finds north.
+* **Bring-up when it arrives:** `tools/get_zwo_sdk.sh`; ZWO's udev rule
+  (sudo, once); rebuild; check `var/asi_caps.json` says 3552 × 3552 like
+  `config/cameras.yaml`; focus by day on something far away; first clear
+  night: calibrate from the stars, then set white balance and the stretch.
+* **Not tested on the camera yet** (it hasn't arrived): the SDK calls, the
+  Bayer pattern and colours, the frame rate at 16 bits over USB 3, the
+  stretch numbers. The exposure ladder, settings, presets, raw download
+  and star mask are tested without it.

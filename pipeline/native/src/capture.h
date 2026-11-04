@@ -8,16 +8,13 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <string>
 
 #include <cuda.h>
 #include <gst/gst.h>
 
-#include "stitch.h"
-
-using Clock = std::chrono::steady_clock;
+#include "source.h"
 
 struct CaptureFormat {
     enum class Kind { MJPEG, YUYV } kind = Kind::MJPEG;
@@ -26,34 +23,30 @@ struct CaptureFormat {
     int fps = 15;
 };
 
-class CameraSource {
+class CameraSource : public FrameSource {
 public:
     CameraSource(std::string name, std::string device, CaptureFormat fmt);
-    ~CameraSource();
+    ~CameraSource() override;
     CameraSource(const CameraSource&) = delete;
     CameraSource& operator=(const CameraSource&) = delete;
 
-    // Handle bus messages, restarts and new frames. Call from the thread that
-    // owns the CUDA context, never while a stitch is reading image().
-    void poll(Clock::time_point now);
+    // Handles bus messages too
+    void poll(Clock::time_point now) override;
 
-    const std::string& name() const { return name_; }
+    const std::string& name() const override { return name_; }
     const std::string& device() const { return device_; }
-    bool has_frame() const { return held_ != nullptr; }
-    const PlanarImage& image() const { return image_; }
-    const char* state() const;
+    bool has_frame() const override { return held_ != nullptr; }
+    const PlanarImage& image() const override { return image_; }
+    const char* state() const override;
 
-    // Frames received since the last call (for fps reporting)
-    uint64_t take_frame_count();
+    uint64_t take_frame_count() override;
     // Damaged frames dropped before decoding since the last call (F-010)
-    uint64_t take_dropped() { return dropped_.exchange(0); }
-    uint64_t restarts() const { return restarts_; }
-    // Counts every new frame (never reset): a change means image() is a new picture
-    uint64_t frame_seq() const { return seq_; }
+    uint64_t take_dropped() override { return dropped_.exchange(0); }
+    uint64_t restarts() const override { return restarts_; }
+    uint64_t frame_seq() const override { return seq_; }
 
-    // Save the next good frame exactly as the camera sent it (MJPEG only) to
-    // path: the raw download (D-023). Written to path.tmp, then renamed
-    void request_raw(const std::string& path);
+    // The next good frame exactly as the camera sent it (MJPEG only), base + ".jpg"
+    void request_raw(const std::string& base) override;
 
 private:
     static GstPadProbeReturn check_frame(GstPad*, GstPadProbeInfo* info, gpointer self);
