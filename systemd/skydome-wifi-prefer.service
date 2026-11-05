@@ -1,0 +1,10 @@
+# SkyDome: on Wi-Fi, move up to the best saved network in range (tools/wifi_prefer.sh).
+#   sudo cp systemd/skydome-wifi-prefer.* /etc/systemd/system/ && sudo systemctl enable --now skydome-wifi-prefer.timer
+[Unit]
+Description=SkyDome: move up to the best Wi-Fi network in range
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/skydome/skydome/tools/wifi_prefer.sh

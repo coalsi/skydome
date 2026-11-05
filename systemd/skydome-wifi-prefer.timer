@@ -1,0 +1,10 @@
+# Every 5 minutes: see skydome-wifi-prefer.service
+[Unit]
+Description=SkyDome: check for a better Wi-Fi network every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
