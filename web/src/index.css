@@ -51,53 +51,108 @@ body,
   height: 100%;
 }
 
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;   /* no font inflation on its side */
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+/* iOS zooms the page into anything smaller */
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+/* Controls: no double-tap wait, no selecting their labels with a long press */
+button,
+a,
+[role="button"] {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Answers the finger as it lands */
+.press {
+  transition: transform 100ms ease-out, background-color 150ms, color 150ms;
+}
+.press:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* Clear of the notch, the Dynamic Island and the home bar */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-sides {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+.overlay-sides {
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+}
+.overlay-sides.top-0 {
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+}
+.overlay-sides.bottom-0 {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
 }
 
-/* Range inputs in the theme's colours */
+/* Range inputs in the theme's colours, big enough for a thumb. Up and down stays
+   with the panel's scroll */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
+  display: block;
   width: 100%;
-  height: 20px;
+  height: 40px;
   background: transparent;
   cursor: pointer;
+  touch-action: pan-y;
 }
 input[type="range"]::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 2px;
+  height: 6px;
+  border-radius: 3px;
   background: var(--line);
 }
 input[type="range"]::-moz-range-track {
-  height: 4px;
-  border-radius: 2px;
+  height: 6px;
+  border-radius: 3px;
   background: var(--line);
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  margin-top: -6px;
+  width: 28px;
+  height: 28px;
+  margin-top: -11px;
   border-radius: 50%;
   background: var(--accent);
-  border: 2px solid var(--panel);
+  border: 3px solid var(--panel);
 }
 input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--accent);
-  border: 2px solid var(--panel);
+  border: 3px solid var(--panel);
 }
 input[type="range"]:disabled {
   opacity: 0.35;

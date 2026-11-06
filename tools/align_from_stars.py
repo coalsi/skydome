@@ -162,8 +162,9 @@ def run(args, say: Status) -> int:
     frames = args.frames if exp <= 2 else max(2, min(args.frames, int(60 // exp) + 1))
     images, t = grab(args.url, frames, wait_s=exp + 0.5 if exp > 1 else 0.0)
     dirs, mags = star_directions(cat, site.latitude_deg, site.longitude_deg, t)
+    # A fast fisheye's stars are several pixels wide, wider than sky_stars expects of a point
     dets = {c.name: sky_stars(images[c.name], detect_stars(images[c.name], sigma=4.5, max_stars=3000),
-                              up=sky_blocks(c))
+                              up=sky_blocks(c), inner=4, outer=14, min_core=0.5)
             for c in cams if c.name in images}
     for c in cams:
         if c.name not in images:

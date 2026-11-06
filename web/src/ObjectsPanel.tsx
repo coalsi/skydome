@@ -74,7 +74,7 @@ export function ObjectsPanel({ selected, onSelect }: {
       <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Show">
         {FILTERS.map((f) => (
           <button key={f.key} type="button" role="radio" aria-checked={filter === f.key} onClick={() => setFilter(f.key)}
-            className={`rounded-full px-2.5 py-1 text-xs ring-1 ring-line ${filter === f.key ? "bg-accent text-bg" : "text-muted hover:text-fg"}`}>
+            className={`press min-h-9 rounded-full px-3 text-sm ring-1 ring-line ${filter === f.key ? "bg-accent text-bg" : "text-muted hover:text-fg"}`}>
             {f.label}
             {f.key === "unknown" && summary?.unknown ? <span className="ml-1 font-semibold">{summary.unknown}</span> : null}
           </button>
@@ -130,7 +130,7 @@ function ObjectRow({ o, labels, open, onOpen, onLabel }: {
       <div className="flex items-center gap-2 border-t border-line px-2 py-1.5">
         <label htmlFor={`label-${o.id}`} className="text-xs text-muted">It was</label>
         <select id={`label-${o.id}`} value={o.label ?? ""} onChange={(e) => onLabel(e.target.value)}
-          className="flex-1 rounded-md bg-bg px-2 py-1 text-xs ring-1 ring-line">
+          className="min-h-10 min-w-0 flex-1 rounded-md bg-bg px-2 ring-1 ring-line">
           <option value="">{`${o.auto_kind} (the watcher's guess)`}</option>
           {labels.map((l) => <option key={l} value={l}>{l}</option>)}
           <option value="__other">something else…</option>

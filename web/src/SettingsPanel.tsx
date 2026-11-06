@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Control } from "./api";
+import { Range, Switch } from "./controls";
 
 // How each control is shown: the ZWO all-sky camera's (D-029; units in the names, gains in 0.1 dB),
 // and the picture controls UVC cameras have (their own units)
@@ -109,8 +110,8 @@ export function SettingsPanel() {
   return (
     <div className="space-y-5">
       <p className="text-xs leading-relaxed text-muted">
-        Kept across restarts, and the same settings an NVR changes over ONVIF. Night and Day (Sky tab) set these for
-        you at dusk and dawn.
+        The same settings an NVR changes over ONVIF. Night and Day replace the main ones at dusk and dawn, so a
+        change here lasts until then.
       </p>
       {error && <p className="rounded-md bg-bad/10 px-3 py-2 text-xs text-bad ring-1 ring-bad/30">{error}</p>}
       {GROUPS.map((group) => {
@@ -145,7 +146,7 @@ function ControlRow({ c, meta, disabled, onChange }: {
   const kind = meta.kind ?? "slider";
   const id = `ctl-${c.name}`;
   const reset = c.value !== c.default && !disabled && (
-    <button type="button" onClick={() => onChange(c.default)} className="text-[11px] text-muted hover:text-accent"
+    <button type="button" onClick={() => onChange(c.default)} className="-my-2 px-2 py-2 text-xs text-muted hover:text-accent"
       title={`Back to the camera's default (${meta.fmt ? meta.fmt(c.default) : c.default})`}>
       reset
     </button>
@@ -156,11 +157,7 @@ function ControlRow({ c, meta, disabled, onChange }: {
     return (
       <div className="flex items-center justify-between gap-3">
         <label htmlFor={id} className="text-sm">{meta.label}</label>
-        <button id={id} type="button" role="switch" aria-checked={on}
-          onClick={() => onChange(on ? meta.off! : meta.on!)}
-          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${on ? "bg-accent" : "bg-line"}`}>
-          <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-fg shadow transition-transform ${on ? "translate-x-5" : ""}`} />
-        </button>
+        <Switch id={id} on={on} onChange={(v) => onChange(v ? meta.on! : meta.off!)} />
       </div>
     );
   }
@@ -172,7 +169,7 @@ function ControlRow({ c, meta, disabled, onChange }: {
         <div className="flex rounded-lg bg-raised p-0.5 ring-1 ring-line" role="radiogroup" aria-label={meta.label}>
           {meta.options!.map(([v, label]) => (
             <button key={v} type="button" role="radio" aria-checked={c.value === v} onClick={() => onChange(v)}
-              className={`rounded-md px-2.5 py-1 text-xs ${c.value === v ? "bg-accent text-bg" : "text-muted hover:text-fg"}`}>
+              className={`press min-h-9 rounded-md px-3 text-sm ${c.value === v ? "bg-accent text-bg" : "text-muted hover:text-fg"}`}>
               {label}
             </button>
           ))}
@@ -198,9 +195,8 @@ function ControlRow({ c, meta, disabled, onChange }: {
           </span>
         </span>
       </div>
-      <input id={id} type="range" disabled={disabled}
-        min={log ? 0 : c.min} max={log ? 1000 : c.max} step={log ? 1 : c.step}
-        value={toPos(c.value)} onChange={(e) => onChange(fromPos(Number(e.target.value)))} />
+      <Range id={id} disabled={disabled} min={log ? 0 : c.min} max={log ? 1000 : c.max} step={log ? 1 : c.step}
+        value={toPos(c.value)} onChange={(p) => onChange(fromPos(p))} />
     </div>
   );
 }

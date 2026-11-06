@@ -11,7 +11,10 @@
 //
 // Each frame's sky level (the median of the sky circle, 0..1 of full scale)
 // moves the index toward `target`, most of the way, and never more than 8x
-// at once. The camera's gain is in 0.1 dB steps, so linear = 10^(gain/200).
+// at once, and only once a change has reached the picture: a video-rate camera
+// is a few frames behind, and adjusting on every frame swings from one end of
+// the range to the other. The camera's gain is in 0.1 dB steps, so
+// linear = 10^(gain/200).
 #pragma once
 
 #include <algorithm>
@@ -29,6 +32,9 @@ public:
     double max_us = 20e6;         // longest at night
     int max_gain = 200;           // 20 dB
     double target = 0.18;         // the sky's median, linear (mid-grey after a display gamma)
+    double long_us = 1e6;         // from here up a frame is worth keeping the exposure steady for
+    double near_enough = 1.25;
+    int settle_frames = 3;        // frames at video rates before a change shows in the picture
 
     static double linear(int gain) { return std::pow(10.0, gain / 200.0); }
 
@@ -51,11 +57,21 @@ public:
         return s;
     }
 
+    // The camera has just been given `s`. A long exposure's next full frame
+    // already has it (AsiSource::on_frame); video frames lag behind
+    void changed(const Setting& s) { wait_ = s.exposure_us < long_us ? settle_frames : 0; }
+
     // A frame taken with `taken` came back with sky level `level`
     void update(double level, const Setting& taken) {
+        if (wait_ > 0) {
+            --wait_;
+            return;
+        }
         const double got = static_cast<double>(taken.exposure_us) * linear(taken.gain);
         double ratio = level > 1e-4 ? target / level : 8.0;
         ratio = std::clamp(ratio, 1.0 / 8.0, 8.0);
+        // Near enough: changing a long exposure costs a frame (AsiSource::on_frame)
+        if (taken.exposure_us >= long_us && ratio > 1.0 / near_enough && ratio < near_enough) return;
         // 60% of the way in log terms: settles in a few frames without hunting
         set_index(got * std::pow(ratio, 0.6));
     }
@@ -63,4 +79,5 @@ public:
 private:
     double ceiling() const { return std::max(min_us, max_us * linear(max_gain)); }
     double e_ = 1000;
+    int wait_ = 0;
 };

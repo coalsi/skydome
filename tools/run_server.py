@@ -16,7 +16,7 @@ NVRs find it by WS-Discovery (or add http://skydome.local/onvif/device_service
 by hand) and log in with the user in var/onvif_credentials.yaml, created with
 a random password on the first run. ONVIF offers:
 
-  * the Detail stream (rtsp://<jetson>:8554/dome, 5120² H.264 at 15 fps)
+  * the Detail stream (rtsp://<jetson>:8554/dome, 5120 x 2880 H.264 at 15 fps)
   * a full-resolution JPEG snapshot (skydome-live's hardware encoder)
   * imaging settings: exposure (auto/manual, time, gain), and for UVC
     cameras brightness, contrast, saturation, sharpness, backlight
@@ -48,7 +48,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import uvicorn  # noqa: E402
 import yaml  # noqa: E402
 from run_live import (ASI_CAPS, ASI_SETTINGS, FULL_SNAPSHOT, HORIZON_FILE, MODE_FILE, MODES, RAW_DIR,  # noqa: E402
-                      SNAPSHOT, STATS_FILES, STACK_FILE, STRETCH_FILE, ZOOM_FILE)
+                      SNAPSHOT, STATS_FILES, STACK_FILE, STRETCH_FILE, ZOOM_FILE, PHONE_FILE)
 from skydome_pipeline.config import load_cameras, load_modes, load_site  # noqa: E402
 from skydome_server.app import Live, create_app  # noqa: E402
 from skydome_pipeline.skymodel import SkyModel  # noqa: E402
@@ -128,14 +128,17 @@ def main() -> int:
 
     ident = identity()
     detail = MODES["detail"]
-    stream = Stream(detail["size"], detail["fps"], detail["bitrate"], detail["path"])
+    dome = load_modes(ROOT / "config").dome
+    aspect = dome.stream_aspect or (1, 1)
+    stream = Stream(detail["size"], detail["fps"], detail["bitrate"], detail["path"],
+                    height=detail["size"] * aspect[1] // aspect[0] // 2 * 2)
     users = load_credentials(CREDENTIALS)
     zwo = any((c.device or "").startswith("asi") for c in load_cameras(ROOT / "config").cameras)
     settings = AsiSettings(ASI_SETTINGS, ASI_CAPS, log=log) if zwo else CameraSettings(CAMERA_SETTINGS, log=log)
     services = Services(ident, stream, settings, users, interfaces=interfaces, log=log)
     snapshot = SnapshotSource(Path(args.snapshot))
-    live_cfg = Live(MODE_FILE, STATS_FILES, zoom_file=Path(ZOOM_FILE), horizon_file=HORIZON_FILE,
-                    edge_deg=load_modes(ROOT / "config").dome.edge_zenith_deg, raw_dir=RAW_DIR,
+    live_cfg = Live(MODE_FILE, STATS_FILES, zoom_file=Path(ZOOM_FILE), phone_file=Path(PHONE_FILE), horizon_file=HORIZON_FILE,
+                    edge_deg=dome.edge_zenith_deg, north_deg=dome.north_deg, aspect=aspect[0] / aspect[1], raw_dir=RAW_DIR,
                     stretch_file=STRETCH_FILE, stack_file=STACK_FILE,
                     extra_files=(ROOT / "config" / "cameras.yaml", ROOT / "config" / "calibration" / "extrinsics.yaml"))
     site = load_site(ROOT / "config")

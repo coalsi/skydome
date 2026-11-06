@@ -12,7 +12,8 @@
 //
 // On the side (DECISIONS.md D-023): full-detail stills from a bigger table
 // on request, a zoom stream of whatever part of the dome the web page is
-// zoomed into (rendered straight from the cameras), and a ground mask.
+// zoomed into (rendered straight from the cameras), a whole-sky stream small
+// enough for a phone to decode, and a ground mask.
 
 #include <algorithm>
 #include <atomic>
@@ -58,7 +59,11 @@ struct Options {
     std::string full_lut, full_snapshot;   // full-detail stills (both needed)
     std::string zoom_file;                 // zoom requests from the web page
     int zoom_w = 1600, zoom_h = 1200, zoom_bitrate = 8000;
+    float north_deg = 0.f;                 // where north sits in the picture, counterclockwise from the top
     std::string zoom_sink = "rtspclientsink location=rtsp://127.0.0.1:8554/dome-zoom protocols=tcp latency=0";
+    std::string phone_file;                // touched by the web page while a phone watches
+    int phone_w = 1920, phone_h = 1080, phone_bitrate = 6000;
+    std::string phone_sink = "rtspclientsink location=rtsp://127.0.0.1:8554/dome-phone protocols=tcp latency=0";
     std::string horizon;                   // ground mask file
     std::string raw_dir;                   // raw camera frames on request
     std::string stretch;                   // night stretch file: "black k"
@@ -111,6 +116,8 @@ void usage() {
                  "  --capture WxH@FPS    camera mode (default 3840x2160@15)\n"
                  "  --format mjpeg|yuyv  camera format (default mjpeg; yuyv only up to 1080p)\n"
                  "  --bitrate KBPS       H.264 bitrate (default 20000)\n"
+                 "  --stream-height H    stream the middle of the dome, H tall (even; default all of it)\n"
+                 "  --north-deg DEG      where north sits, counterclockwise from the top (default 0)\n"
                  "  --sink DESC          GStreamer sink after h264parse (default RTSP to mediamtx /dome)\n"
                  "  --no-encode          stitch only (benchmark)\n"
                  "  --stats-file PATH    write JSON stats every 2 s\n"
@@ -123,6 +130,9 @@ void usage() {
                  "  --zoom-size WxH      zoom stream size (default 1600x1200)\n"
                  "  --zoom-bitrate KBPS  zoom stream bitrate (default 8000)\n"
                  "  --zoom-sink DESC     zoom stream sink (default RTSP to mediamtx /dome-zoom)\n"
+                 "  --phone-file PATH    touched while a phone watches: the whole picture, small enough to decode\n"
+                 "  --phone-size WxH     phone stream size (default 1920x1080)\n"
+                 "  --phone-bitrate KBPS phone stream bitrate (default 6000)\n"
                  "  --horizon FILE       ground mask: 360 horizon altitudes; reread when it changes\n"
                  "  --stretch FILE       night stretch \"black k\" (k 0 = off); reread when it changes\n"
                  "  --stack FILE         stack each camera's last N frames (\"N\"; 0/1 = off); reread when it changes\n"
@@ -160,6 +170,8 @@ Options parse(int argc, char** argv) {
             else if (v == "yuyv") o.capture.kind = CaptureFormat::Kind::YUYV;
             else throw std::runtime_error("--format is mjpeg or yuyv");
         } else if (a == "--bitrate") o.enc.bitrate_kbps = std::stoi(next());
+        else if (a == "--stream-height") o.enc.crop_height = std::stoi(next());
+        else if (a == "--north-deg") o.north_deg = std::stof(next());
         else if (a == "--sink") o.enc.sink = next();
         else if (a == "--no-encode") o.enc.encode = false;
         else if (a == "--stats-file") o.stats_file = next();
@@ -174,6 +186,11 @@ Options parse(int argc, char** argv) {
                 throw std::runtime_error("--zoom-size wants an even WxH");
         } else if (a == "--zoom-bitrate") o.zoom_bitrate = std::stoi(next());
         else if (a == "--zoom-sink") o.zoom_sink = next();
+        else if (a == "--phone-file") o.phone_file = next();
+        else if (a == "--phone-size") {
+            if (std::sscanf(next().c_str(), "%dx%d", &o.phone_w, &o.phone_h) != 2 || o.phone_w % 2 || o.phone_h % 2)
+                throw std::runtime_error("--phone-size wants an even WxH");
+        } else if (a == "--phone-bitrate") o.phone_bitrate = std::stoi(next());
         else if (a == "--horizon") o.horizon = next();
         else if (a == "--raw-dir") o.raw_dir = next();
         else if (a == "--stretch") o.stretch = next();
@@ -273,6 +290,7 @@ int run(int argc, char** argv) {
 
     const GridLut lut = GridLut::load(o.lut);
     GpuStitcher stitcher(lut);
+    stitcher.set_north(o.north_deg);
     std::unique_ptr<PhotoBalance> balance;
     if (o.balance && lut.cams.size() > 1) {   // one camera has nothing to match
         balance = std::make_unique<PhotoBalance>(lut);
@@ -303,6 +321,7 @@ int run(int argc, char** argv) {
             if (fl.camera_index(lut.cams[c].name) != static_cast<int>(c))
                 throw std::runtime_error(o.full_lut + " doesn't list the cameras like " + o.lut);
         full = std::make_unique<GpuStitcher>(fl);
+        full->set_north(o.north_deg);
         full_pool = std::make_unique<FramePool>(fl.size, fl.size, 1);
         full_snap = std::make_unique<Snapshot>(o.full_snapshot, fl.size, fl.size);
         std::fprintf(stderr, "full-detail stills: %dx%d\n", fl.size, fl.size);
@@ -314,6 +333,14 @@ int run(int argc, char** argv) {
     View zoom_view{o.zoom_w, o.zoom_h, 0.f, 0.f, 1.f};
     Clock::time_point zoom_last{};
     time_t zoom_mtime = 0;
+
+    // Phone stream: the same picture as the main one, 5120 wide being more than a
+    // phone's decoder takes. Runs while a page keeps asking, as the zoom stream does
+    std::unique_ptr<Encoder> phone_enc;
+    std::unique_ptr<FramePool> phone_pool;
+    const float phone_scale = static_cast<float>(lut.size) / o.phone_w;
+    const View phone_view{o.phone_w, o.phone_h, 0.f, (lut.size - o.phone_h * phone_scale) / 2.f, phone_scale};
+    Clock::time_point phone_last{};
 
     // Ground mask
     time_t horizon_mtime = -1;
@@ -423,8 +450,29 @@ int run(int argc, char** argv) {
                     std::fprintf(stderr, "[zoom] stopped\n");
                 }
             }
+            if (!o.phone_file.empty()) {
+                const time_t m = mtime(o.phone_file);
+                if (m && std::time(nullptr) - m <= kZoomFreshS) {
+                    phone_last = now;
+                    if (!phone_enc) {
+                        EncoderConfig pc;
+                        pc.width = o.phone_w;
+                        pc.height = o.phone_h;
+                        pc.fps = ec.fps;
+                        pc.bitrate_kbps = o.phone_bitrate;
+                        pc.sink = o.phone_sink;
+                        pc.encode = ec.encode;
+                        phone_enc = std::make_unique<Encoder>(pc);
+                        if (!phone_pool) phone_pool = std::make_unique<FramePool>(o.phone_w, o.phone_h, 3);
+                    }
+                } else if (phone_enc && now - phone_last > kZoomLinger) {
+                    phone_enc.reset();
+                    std::fprintf(stderr, "[phone] stopped\n");
+                }
+            }
         }
         if (zoom_enc) zoom_enc->poll(now);
+        if (phone_enc) phone_enc->poll(now);
 
         bool any = false;
         for (size_t c = 0; c < cams.size(); ++c) {
@@ -477,6 +525,13 @@ int run(int argc, char** argv) {
                     stitcher.run_view(views.data(), zf->dev, zoom_view, stream);
                     cuda_check(cudaStreamSynchronize(stream), "zoom stitch");
                     zoom_enc->push(zf);
+                }
+            }
+            if (phone_enc) {
+                if (FramePool::Frame* pf = phone_pool->acquire()) {
+                    stitcher.run_view(views.data(), pf->dev, phone_view, stream);
+                    cuda_check(cudaStreamSynchronize(stream), "phone stitch");
+                    phone_enc->push(pf);
                 }
             }
         }

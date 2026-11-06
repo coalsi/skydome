@@ -78,14 +78,16 @@ def app_for(tmp_path):
     return app, settings, stats, raw
 
 
-def test_presets_set_the_picture_not_the_exposure(tmp_path):
+def test_presets_set_the_picture_and_the_exposure_limits(tmp_path):
     app, settings, *_ = app_for(tmp_path)
     client = TestClient(app)
     r = client.post("/api/preset/night").json()
-    assert r["stretch"] == ASI_PRESETS["night"]["stretch"] and r["stack"] == 3
+    assert r["stretch"] == ASI_PRESETS["night"]["stretch"] and r["stack"] == ASI_PRESETS["night"]["stack"]
     assert settings.effective()["gamma"] == 100 and settings.effective()["auto_exposure"] == 1
+    assert settings.effective()["auto_max_exposure_ms"] == 20000
     client.post("/api/preset/day")
     assert settings.effective()["gamma"] == 220
+    assert settings.effective()["auto_max_exposure_ms"] == 1000
     assert (tmp_path / "stack.txt").read_text().strip() == "0"
 
 

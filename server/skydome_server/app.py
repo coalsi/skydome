@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -40,6 +41,7 @@ from .system import System
 
 STREAM_PATHS = {"detail": "dome", "smooth": "dome-smooth"}   # mediamtx paths (config/mediamtx.yml)
 ZOOM_PATH = "dome-zoom"   # what the page is zoomed into, at the cameras' sharpness (D-023)
+PHONE_PATH = "dome-phone" # the whole picture, small enough for a phone to decode (D-032)
 
 # One click for the sky (D-025). Night: the longest exposure the cameras do
 # (1 s; they slow to 1 fps for it), full gain, no backlight lift, less colour
@@ -66,15 +68,19 @@ PRESETS = {
 
 # The same for the ZWO all-sky camera (D-029), whose own automatic exposure
 # runs from daylight video to 20 s night frames, so the presets only change
-# how the picture is shown. Night: linear (gamma 1), the stretch lifting the
-# faint end of the 12 bits, 3 frames stacked (a minute of light; stars drift
-# ~0.25° in it). Day: a display gamma, no stretch, no stack. The stretch's
-# numbers are a first guess for a sky held at 18% (~46 of 255): tune them
-# on the first clear night. sky.py switches these by the Sun.
+# how the picture is shown. Night: linear (gamma 1), the sky held at 35%, since
+# seven exposures on the real sky (2026-11-05, D-031) caught the most catalogue
+# stars with the most gain: 423 at 20 s gain 200, 551 at gain 300, where the
+# brightest stars clip. The stretch's black sits just under that sky, and 2
+# frames are stacked (40 s of light; stars drift ~4 px in it, less than their
+# size). Day: a display gamma, no stretch, no stack. sky.py switches these by
+# the Sun.
 ASI_PRESETS = {
-    "night": {"camera": {"auto_exposure": 1, "gamma": 100},
-              "stretch": {"black": 38, "k": 20}, "stack": 3},
-    "day": {"camera": {"auto_exposure": 1, "gamma": 220},
+    "night": {"camera": {"auto_exposure": 1, "gamma": 100, "auto_target": 35, "auto_max_gain": 300,
+                         "auto_max_exposure_ms": 20000, "wb_red": 102, "wb_blue": 76},
+              "stretch": {"black": 56, "k": 14}, "stack": 2},
+    "day": {"camera": {"auto_exposure": 1, "gamma": 220, "auto_target": 26, "auto_max_gain": 200,
+                       "auto_max_exposure_ms": 1000, "wb_red": 85, "wb_blue": 118},
             "stretch": {"black": 0, "k": 0}, "stack": 0},
 }
 
@@ -88,12 +94,15 @@ class Live:
     webrtc_port: int = 8889
     webrtc: str = "http://127.0.0.1:8889"
     zoom_file: Path | None = None      # skydome-live renders this rectangle to /dome-zoom (D-023)
+    phone_file: Path | None = None     # touched while a phone watches: skydome-live runs /dome-phone (D-032)
     horizon_file: Path | None = None   # ground mask (D-024): on while this file exists
     raw_dir: Path | None = None        # skydome-live saves camera frames here on request (D-023)
     stretch_file: Path | None = None   # night stretch "black k" (D-025)
     stack_file: Path | None = None     # stacking depth in frames (D-026)
     extra_files: tuple[Path, ...] = ()  # put in the raw download for reference (alignment, cameras)
     edge_deg: float = 100.0            # zenith angle at the dome's edge (config/modes.yaml, D-018)
+    north_deg: float = 0.0             # where north sits, counterclockwise from the top
+    aspect: float = 1.0                # the stream's width / height
     paths: Callable[[], dict | None] | None = field(default=None, repr=False)   # tests replace mediamtx
 
     def stream_paths(self) -> dict | None:
@@ -124,7 +133,10 @@ def create_app(settings: CameraSettings | AsiSettings, live_cfg: Live, system: S
         hf = live_cfg.horizon_file
         return {
             "zoom_path": ZOOM_PATH,
+            "phone_path": PHONE_PATH if live_cfg.phone_file else None,
             "edge_zenith_deg": live_cfg.edge_deg,
+            "north_deg": live_cfg.north_deg,
+            "stream_aspect": live_cfg.aspect,
             "ground_mask": {"available": bool(hf and (hf.exists() or _off(hf).exists())),
                             "on": bool(hf and hf.exists())},
             "mode": mode,
@@ -279,10 +291,20 @@ def create_app(settings: CameraSettings | AsiSettings, live_cfg: Live, system: S
             raise HTTPException(404, "zoom isn't set up")
         if not (-1 <= x0 < x1 <= 2 and -1 <= y0 < y1 <= 2) or x1 - x0 < 1e-3:
             raise HTTPException(400, "want x0 < x1, y0 < y1 around 0..1")
-        tmp = live_cfg.zoom_file.with_name(live_cfg.zoom_file.name + ".tmp")
+        # Two pages can ask at the same moment: each writes its own, the last one wins
+        tmp = live_cfg.zoom_file.with_name(f"{live_cfg.zoom_file.name}.{threading.get_ident()}.tmp")
         tmp.write_text(f"{x0:.6f} {y0:.6f} {x1:.6f} {y1:.6f}\n")
         tmp.replace(live_cfg.zoom_file)
         return {"path": ZOOM_PATH}
+
+    @app.put("/api/phone")
+    def phone() -> dict:
+        """A phone is watching. Sent every couple of seconds; skydome-live streams
+        /dome-phone until the requests stop."""
+        if not live_cfg.phone_file:
+            raise HTTPException(404, "the phone stream isn't set up")
+        live_cfg.phone_file.touch()
+        return {"path": PHONE_PATH}
 
     # ---- the stars: names, and calibrating the rig from them (D-028) -----------------
 

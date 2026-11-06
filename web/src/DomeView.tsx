@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Body, type Moving, type PlaneRow, type SatRow, type StarRow } from "./api";
+import { useMedia } from "./controls";
 import { useWhep } from "./useWhep";
 
 interface View {
@@ -16,6 +17,12 @@ const ZOOM_FROM = 1.4;
 const ZOOM_ASPECT = 4 / 3; // the zoom stream is 1600 x 1200
 const SETTLE_MS = 1200;    // request -> new picture on screen, with margin
 const ZOOM_LINGER_MS = 20000;
+const ZOOM_STEP = 1.8;     // the + and - buttons
+const DOUBLE_TAP_ZOOM = 3;
+const DOUBLE_TAP_MS = 300;
+const CONTROLS_HIDE_MS = 4000; // full view: out of the picture's way until it's touched
+const PHONE_EVERY_MS = 2000;   // keeps the phone stream running
+const NO_PICTURE_MS = 6000;    // connected this long with nothing drawn: this device can't show it
 const SKY_EVERY_MS = 20000;   // stars drift ~0.08° in that
 const MOVING_EVERY_MS = 2000; // planes and satellites (D-030)
 const COMPASS: [string, number, boolean][] = [
@@ -72,11 +79,18 @@ export interface MaskEdit {
   onChange: (alt: number[]) => void;
 }
 
-// The live dome over WebRTC: wheel/pinch zoom, drag to pan; full-detail zoom
-// stream when zoomed in; the ground-mask editor when `mask` is set
-export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
+// The live dome over WebRTC: pinch, double tap, wheel or +/- to zoom, drag to pan;
+// full-detail zoom stream when zoomed in; the ground-mask editor when `mask` is set
+export function DomeView({ path, zoomPath, phonePath, edgeDeg, north, aspect, mask, track, full, canExit, onFull, onMenu }: {
   path: string; zoomPath: string; edgeDeg: number; mask: MaskEdit | null;
+  phonePath: string | null; // the whole picture, for a screen that can't decode the main stream
+  north: number;  // where north sits, degrees counterclockwise from the top
+  aspect: number; // the stream's width / height: it's the middle of the square dome
   track?: [number, number, number][] | null; // an object from the sky watcher's log: [t, az, alt]
+  full: boolean;      // over the whole screen
+  canExit: boolean;   // asked for, rather than the phone being on its side
+  onFull: () => void;
+  onMenu: () => void; // the panels, in the full view
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -85,12 +99,38 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
   const [size, setSize] = useState({ W: 0, H: 0 });
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ d: number; mx: number; my: number; v: View } | null>(null);
-  const conn = useWhep(path, video);
+  // A phone can't decode the 5120 wide main stream, and its screen couldn't show it
+  const touch = useMedia("(pointer: coarse)");
+  const phone = touch && !!phonePath;
+  const conn = useWhep(phone ? phonePath! : path, video);
+  const [noPicture, setNoPicture] = useState(false);
   const stars = useStars();
   const [labels, setLabels] = useState(readLabels);
   const moving = useMoving(labels && !mask);
   const [hover, setHover] = useState<Hover | null>(null);
   const tap = useRef<{ x: number; y: number; t: number } | null>(null);
+  const lastTap = useRef<{ x: number; y: number; t: number } | null>(null);
+  const lastPointer = useRef("mouse");
+  const [glide, setGlide] = useState(false);   // buttons and double taps ease; fingers track exactly
+  const [saving, setSaving] = useState(false);
+  const [controls, setControls] = useState(true);
+  const hideControls = useRef<number>();
+  const upright = useMedia("(orientation: portrait) and (pointer: coarse)");
+
+  useEffect(() => {
+    if (!phone) return;
+    api.phone().catch(() => {});
+    const t = window.setInterval(() => api.phone().catch(() => {}), PHONE_EVERY_MS);
+    return () => window.clearInterval(t);
+  }, [phone]);
+
+  // Connected and sending, and the video still has no size: say so, not a silent black
+  useEffect(() => {
+    setNoPicture(false);
+    if (conn !== "live") return;
+    const t = window.setTimeout(() => setNoPicture(!video.current?.videoWidth), NO_PICTURE_MS);
+    return () => window.clearTimeout(t);
+  }, [conn]);
 
   // Track the area's size (layout, rotation, full screen)
   useEffect(() => {
@@ -99,7 +139,8 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const D = Math.min(size.W, size.H);
+  // Across the dome's square: the stream's width, so a 16:9 stream's square overflows it above and below
+  const D = Math.min(size.W, size.H * aspect);
 
   // ---- zoom stream -------------------------------------------------------------
   const zoomWanted = view.s >= ZOOM_FROM && !mask;
@@ -152,21 +193,24 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
   const sharp = zoomWanted && settled && zoomConn === "live";
 
   // ---- pan / zoom ----------------------------------------------------------------
-  // The video fills the whole area with the square dome centred in it (contain).
+  // The video fills the whole area, centred in it (contain).
   // Zoomed in, the dome may cover the area: then it can't be dragged off an
   // edge. While it's still smaller than the area along an axis, it stays centred
   const clamp = useCallback((v: View): View => {
     const W = frame.current?.clientWidth ?? 0;
     const H = frame.current?.clientHeight ?? 0;
-    const D = Math.min(W, H);
+    const D = Math.min(W, H * aspect);
     const s = Math.min(MAX_ZOOM, Math.max(1, v.s));
-    const axis = (pos: number, side: number) => {
-      const inset = (s * (side - D)) / 2; // layer edge to dome edge, scaled
-      if (s * D <= side) return (side - s * D) / 2 - inset;
-      return Math.min(-inset, Math.max(side - inset - s * D, pos));
+    const axis = (pos: number, side: number, extent: number) => {
+      const inset = (s * (side - extent)) / 2; // layer edge to picture edge, scaled
+      if (s * extent <= side) return (side - s * extent) / 2 - inset;
+      return Math.min(-inset, Math.max(side - inset - s * extent, pos));
     };
-    return { s, x: axis(v.x, W), y: axis(v.y, H) };
-  }, []);
+    return { s, x: axis(v.x, W, D), y: axis(v.y, H, D / aspect) };
+  }, [aspect]);
+
+  // Rotating or going full screen changes the room: keep the view legal in the new one
+  useEffect(() => setView((v) => clamp(v)), [size, clamp]);
 
   const zoomAt = (v: View, factor: number, cx: number, cy: number): View => {
     const s = Math.min(MAX_ZOOM, Math.max(1, v.s * factor));
@@ -174,12 +218,44 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
     return clamp({ s, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k });
   };
 
+  const zoomBy = (factor: number) => {
+    setGlide(true);
+    setView((v) => (factor < 1 && v.s / ZOOM_STEP < 1.1 ? HOME : zoomAt(v, factor, size.W / 2, size.H / 2)));
+  };
+
+  // Full view: the controls fade until the picture's touched. Any touch also
+  // starts the video where autoplay is held back (an iPhone in Low Power Mode)
+  const wake = useCallback(() => {
+    setControls(true);
+    window.clearTimeout(hideControls.current);
+    if (full) hideControls.current = window.setTimeout(() => setControls(false), CONTROLS_HIDE_MS);
+    for (const v of [video.current, zoomVideo.current]) if (v?.paused && v.srcObject) v.play().catch(() => {});
+  }, [full]);
+  useEffect(() => {
+    wake();
+    return () => window.clearTimeout(hideControls.current);
+  }, [wake]);
+  const shown = controls || saving || !full;
+
+  // Safari's own pinch: two fingers on the dome are for the dome. The rest of the page still zooms
+  useEffect(() => {
+    const el = frame.current!;
+    const stop = (e: Event) => e.preventDefault();
+    el.addEventListener("gesturestart", stop, { passive: false });
+    el.addEventListener("gesturechange", stop, { passive: false });
+    return () => {
+      el.removeEventListener("gesturestart", stop);
+      el.removeEventListener("gesturechange", stop);
+    };
+  }, []);
+
   // Wheel needs a non-passive listener to stop the page scrolling
   useEffect(() => {
     const el = frame.current!;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const r = el.getBoundingClientRect();
+      setGlide(false);
       setView((v) => zoomAt(v, Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -192,13 +268,23 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
   };
 
   // ---- labels: compass, and the star under the pointer ------------------------------
-  // (azimuth, altitude) -> screen: the stitch's layout, north up, east left, the edge at edgeDeg
+  // (azimuth, altitude) -> screen: the stitch's layout, east to north's left, the edge at edgeDeg
   const toScreen = (az: number, alt: number) => {
     const rho = (90 - alt) / edgeDeg / 2;
-    const a = (az * Math.PI) / 180;
+    const a = ((az + north) * Math.PI) / 180;
     const u = 0.5 - rho * Math.sin(a), v = 0.5 - rho * Math.cos(a);
     return { x: view.x + view.s * ((size.W - D) / 2 + u * D), y: view.y + view.s * ((size.H - D) / 2 + v * D) };
   };
+  // The picture on screen: a wide stream shows the middle of the dome, and what's
+  // in the sky above and below it isn't in the picture
+  const shownRect = {
+    x: view.x + view.s * ((size.W - D) / 2),
+    y: view.y + view.s * ((size.H - D / aspect) / 2),
+    w: view.s * D,
+    h: (view.s * D) / aspect,
+  };
+  const inPicture = (q: { x: number; y: number }) =>
+    q.x >= shownRect.x && q.x <= shownRect.x + shownRect.w && q.y >= shownRect.y && q.y <= shownRect.y + shownRect.h;
   // What's nearest the point within reach: aircraft, satellites, planets and the Moon
   // first, then stars, leaning towards the brighter ones
   const starAt = (p: { x: number; y: number }, reach: number): Hover | null => {
@@ -206,7 +292,7 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
     const consider = (az: number, alt: number, bias: number, make: (q: { x: number; y: number }) => Hover) => {
       const q = toScreen(az, alt);
       const d = Math.hypot(q.x - p.x, q.y - p.y);
-      if (d <= reach && d + bias < score) [best, score] = [make(q), d + bias];
+      if (inPicture(q) && d <= reach && d + bias < score) [best, score] = [make(q), d + bias];
     };
     for (const pl of moving?.planes ?? []) consider(pl[2], pl[3], -6, (q) => ({ kind: "plane", plane: pl, ...q }));
     for (const sat of litSats(moving)) consider(sat[2], sat[3], -4, (q) => ({ kind: "sat", sat, ...q }));
@@ -227,12 +313,12 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
   };
 
   // ---- ground-mask editor ------------------------------------------------------
-  // A point on screen -> (azimuth, altitude) on the dome (north up, east left)
+  // A point on screen -> (azimuth, altitude) on the dome
   const skyAt = (p: { x: number; y: number }) => {
     const u = ((p.x - view.x) / view.s - (size.W - D) / 2) / D;
     const v = ((p.y - view.y) / view.s - (size.H - D) / 2) / D;
     const dx = 2 * u - 1, dy = 2 * v - 1;
-    const az = ((Math.atan2(-dx, -dy) * 180) / Math.PI + 360) % 360;
+    const az = ((Math.atan2(-dx, -dy) * 180) / Math.PI - north + 720) % 360;
     return { az, alt: 90 - Math.hypot(dx, dy) * edgeDeg };
   };
   const paint = (p: { x: number; y: number }) => {
@@ -246,6 +332,9 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
 
   const onPointerDown = (e: React.PointerEvent) => {
     frame.current!.setPointerCapture(e.pointerId);
+    lastPointer.current = e.pointerType;
+    setGlide(false);
+    setSaving(false);
     const p = local(e);
     tap.current = pointers.current.size === 0 ? { ...p, t: performance.now() } : null;
     pointers.current.set(e.pointerId, p);
@@ -261,7 +350,10 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
     const prev = pointers.current.get(e.pointerId);
     if (!prev) {
       // A mouse just passing over: name the star under it
-      if (e.pointerType === "mouse" && labels && !mask) setHover(starAt(local(e), 14));
+      if (e.pointerType === "mouse") {
+        if (full) wake();
+        if (labels && !mask) setHover(starAt(local(e), 14));
+      }
       return;
     }
     const p = local(e);
@@ -283,25 +375,28 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
-    // A tap (touch) names the star under it, or clears the name
-    if (tap.current && e.pointerType !== "mouse" && labels && !mask && performance.now() - tap.current.t < 500) {
-      setHover(starAt(local(e), 28));
+    // A tap (touch) names the star under it, or clears the name; two zoom in, or back out
+    if (tap.current && e.pointerType !== "mouse" && !mask && performance.now() - tap.current.t < 500) {
+      const p = local(e), now = performance.now(), before = lastTap.current;
+      if (before && now - before.t < DOUBLE_TAP_MS && Math.hypot(p.x - before.x, p.y - before.y) < 40) {
+        lastTap.current = null;
+        setHover(null);
+        setGlide(true);
+        setView((v) => (v.s > 1 ? HOME : zoomAt(v, DOUBLE_TAP_ZOOM, p.x, p.y)));
+      } else {
+        lastTap.current = { ...p, t: now };
+        if (labels) setHover(starAt(p, 28));
+      }
     }
     tap.current = null;
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinch.current = null;
   };
 
-  const fullscreen = () => {
-    const el = frame.current?.parentElement;
-    if (document.fullscreenElement) document.exitFullscreen();
-    else el?.requestFullscreen?.();
-  };
-
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
   return (
-    <div className="relative h-full w-full bg-black">
+    <div className="relative h-full w-full bg-black" onPointerDownCapture={wake}>
       <div
         ref={frame}
         className="absolute inset-0 touch-none overflow-hidden select-none"
@@ -311,16 +406,21 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onPointerLeave={(e) => e.pointerType === "mouse" && pointers.current.size === 0 && setHover(null)}
-        onDoubleClick={() => !mask && setView(HOME)}
+        onDoubleClick={(e) => {
+          if (mask || lastPointer.current !== "mouse") return;
+          const p = local(e as unknown as React.PointerEvent);
+          setGlide(true);
+          setView((v) => (v.s > 1 ? HOME : zoomAt(v, DOUBLE_TAP_ZOOM, p.x, p.y)));
+        }}
       >
         <div
-          className="absolute inset-0 origin-top-left"
+          className={`absolute inset-0 origin-top-left ${glide ? "transition-transform duration-200 ease-out motion-reduce:transition-none" : ""}`}
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})` }}
         >
           <video ref={video} className="h-full w-full object-contain" style={{ filter: "var(--video-filter)" }}
             autoPlay muted playsInline />
           {mask && D > 0 && (
-            <MaskOverlay alt={mask.alt} edgeDeg={edgeDeg}
+            <MaskOverlay alt={mask.alt} edgeDeg={edgeDeg} north={north}
               style={{ left: (size.W - D) / 2, top: (size.H - D) / 2, width: D, height: D }} />
           )}
         </div>
@@ -339,6 +439,10 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
                   stroke="rgba(0,0,0,0.85)" strokeWidth={3} paintOrder="stroke">{t}</text>
               );
             })}
+            <clipPath id="dome-shown">
+              <rect x={shownRect.x} y={shownRect.y} width={shownRect.w} height={shownRect.h} />
+            </clipPath>
+            <g clipPath="url(#dome-shown)">
             {moving?.bodies.filter((b) => b.kind !== "sun" && b.alt > 0).map((b) => {
               const q = toScreen(b.az, b.alt);
               return (
@@ -376,6 +480,7 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
                 </g>
               );
             })}
+            </g>
             {hover && <circle cx={hover.x} cy={hover.y} r={10} fill="none" stroke="#facc15" strokeWidth={1.5} />}
           </svg>
         )}
@@ -398,76 +503,102 @@ export function DomeView({ path, zoomPath, edgeDeg, mask, track }: {
         {labels && !mask && hover && (
           <StarTip hover={hover} W={size.W} H={size.H} />
         )}
-        {conn !== "live" && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="rounded-full bg-panel/90 px-4 py-2 text-sm text-muted ring-1 ring-line">
-              {conn === "waiting" ? "Waiting for the live dome to start…" : "Connecting to the dome…"}
+        {(conn !== "live" || noPicture) && (
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="rounded-2xl bg-panel/90 px-4 py-2 text-center text-sm text-muted ring-1 ring-line">
+              {noPicture ? "Connected, but this device isn't showing the video. Try reloading the page."
+                : conn === "waiting" ? "Waiting for the live dome to start…" : "Connecting to the dome…"}
             </div>
           </div>
         )}
       </div>
 
-      {zoomWanted && (
-        <div className="pointer-events-none absolute top-3 left-3 rounded-full bg-panel/85 px-3 py-1 text-xs text-muted ring-1 ring-line backdrop-blur">
-          {sharp ? "Full detail" : zoomConn === "live" ? "Sharpening…" : "Starting full detail…"}
+      <div className={`overlay-sides pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 pt-2 transition-opacity duration-300 ${shown ? "" : "opacity-0"}`}>
+        <div className="flex flex-col items-start gap-1.5">
+          {zoomWanted && (
+            <div className="rounded-full bg-panel/85 px-3 py-1 text-xs text-muted ring-1 ring-line backdrop-blur">
+              {sharp ? "Full detail" : zoomConn === "live" ? "Sharpening…" : "Starting full detail…"}
+              <span className="tabular ml-1.5 text-fg">{view.s.toFixed(1)}×</span>
+            </div>
+          )}
+          {full && upright && !mask && (
+            <div className="rounded-full bg-panel/85 px-3 py-1 text-xs text-muted ring-1 ring-line backdrop-blur">
+              Turn sideways to fill the screen
+            </div>
+          )}
         </div>
-      )}
-
-      <div className="absolute right-3 bottom-3 flex gap-2">
-        <IconButton label={labels ? "Hide compass, names, satellites and aircraft"
-          : "Show compass, star and planet names, satellites and aircraft (hover or tap one)"}
-          onClick={toggleLabels} active={labels}>
-          <circle cx="12" cy="12" r="8.5" />
-          <path d="M12 5.5l2 6.5-2 6.5-2-6.5z" />
-        </IconButton>
-        {view.s > 1 && (
-          <IconButton label="Reset view" onClick={() => setView(HOME)}>
-            <path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" />
-          </IconButton>
+        {full && (
+          <div className={`flex gap-2 ${shown ? "pointer-events-auto" : ""}`}>
+            <IconButton label="Settings" onClick={onMenu}>
+              <path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" />
+            </IconButton>
+            {canExit && (
+              <IconButton label="Leave full screen" onClick={onFull}>
+                <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+              </IconButton>
+            )}
+          </div>
         )}
-        <a href={`/api/snapshot.jpg?t=${Date.now()}`} download={`skydome-${stamp}.jpg`}
-          title="Save a snapshot of the dome as it streams" aria-label="Save a snapshot"
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-panel/85 text-fg ring-1 ring-line backdrop-blur hover:text-accent">
-          <Svg>
+      </div>
+
+      <div className={`overlay-sides pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 pb-2 transition-opacity duration-300 ${shown ? "" : "opacity-0"}`}>
+        <div className={`flex gap-2 ${shown ? "pointer-events-auto" : ""}`}>
+          <IconButton label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)} disabled={view.s <= 1}>
+            <path d="M6 12h12" />
+          </IconButton>
+          <IconButton label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)} disabled={view.s >= MAX_ZOOM}>
+            <path d="M12 6v12M6 12h12" />
+          </IconButton>
+        </div>
+        <div className={`relative flex gap-2 ${shown ? "pointer-events-auto" : ""}`}>
+          {saving && (
+            <div className="absolute right-0 bottom-13 z-20 w-64 overflow-hidden rounded-xl bg-panel/95 ring-1 ring-line backdrop-blur">
+              <SaveLink href={`/api/snapshot.jpg?t=${Date.now()}`} name={`skydome-${stamp}.jpg`}
+                title="Snapshot" sub="As it streams" onDone={() => setSaving(false)} />
+              <SaveLink href={`/api/full.jpg?t=${Date.now()}`} name={`skydome-full-${stamp}.jpg`}
+                title="Full-detail still" sub="About 10 MB, takes a few seconds" onDone={() => setSaving(false)} />
+              <SaveLink href={`/api/raw.zip?t=${Date.now()}`} title="Raw camera frame"
+                sub="Exactly as the camera sent it, zipped" onDone={() => setSaving(false)} />
+            </div>
+          )}
+          <IconButton label={labels ? "Hide compass, names, satellites and aircraft"
+            : "Show compass, names, satellites and aircraft"} onClick={toggleLabels} active={labels}>
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 5.5l2 6.5-2 6.5-2-6.5z" />
+          </IconButton>
+          <IconButton label="Save a picture" onClick={() => setSaving(!saving)} active={saving}>
             <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
             <circle cx="12" cy="13" r="3.5" />
-          </Svg>
-        </a>
-        <a href={`/api/full.jpg?t=${Date.now()}`} download={`skydome-full-${stamp}.jpg`}
-          title="Save a full-detail still: the cameras' own sharpness, 6656 × 6656 (about 10 MB, takes a few seconds)"
-          aria-label="Save a full-detail still"
-          className="flex h-10 items-center gap-1.5 rounded-full bg-panel/85 px-3 text-xs font-medium text-fg ring-1 ring-line backdrop-blur hover:text-accent">
-          <Svg>
-            <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
-            <path d="M12 10v6M9 13h6" />
-          </Svg>
-          Full detail
-        </a>
-        <a href={`/api/raw.zip?t=${Date.now()}`} download
-          title="Every pixel there is: each camera's frame exactly as it sent it, 5 x 3840 x 2160, zipped (no stitching)"
-          aria-label="Download the raw camera frames"
-          className="flex h-10 items-center gap-1.5 rounded-full bg-panel/85 px-3 text-xs font-medium text-fg ring-1 ring-line backdrop-blur hover:text-accent">
-          <Svg>
-            <rect x="3" y="5" width="8" height="6" rx="1" />
-            <rect x="13" y="5" width="8" height="6" rx="1" />
-            <rect x="8" y="13" width="8" height="6" rx="1" />
-          </Svg>
-          Raw
-        </a>
-        <IconButton label="Full screen" onClick={fullscreen}>
-          <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
-        </IconButton>
+          </IconButton>
+          {!full && (
+            <IconButton label="Full screen" onClick={onFull}>
+              <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+            </IconButton>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
+function SaveLink({ href, name, title, sub, onDone }: {
+  href: string; name?: string; title: string; sub: string; onDone: () => void;
+}) {
+  return (
+    <a href={href} download={name ?? true} onClick={onDone}
+      className="press flex min-h-11 flex-col justify-center border-b border-line px-3 py-1 last:border-b-0">
+      <span className="text-sm text-fg">{title}</span>
+      <span className="text-[11px] text-muted">{sub}</span>
+    </a>
+  );
+}
+
 // The masked ground, shaded, over the dome square (same layout as the stitch:
 // north up, east left, the edge at edgeDeg from the zenith)
-function MaskOverlay({ alt, edgeDeg, style }: { alt: number[]; edgeDeg: number; style: React.CSSProperties }) {
+function MaskOverlay({ alt, edgeDeg, north, style }: { alt: number[]; edgeDeg: number; north: number; style: React.CSSProperties }) {
   const pts = alt.map((a, az) => {
     const rho = Math.min(1, Math.max(0, (90 - a) / edgeDeg)) / 2;
-    const t = ((az + 0.5) * Math.PI) / 180;
+    const t = ((az + 0.5 + north) * Math.PI) / 180;
     return `${(0.5 - rho * Math.sin(t)).toFixed(4)},${(0.5 - rho * Math.cos(t)).toFixed(4)}`;
   });
   const line = `M${pts.join("L")}Z`;
@@ -531,12 +662,12 @@ function Svg({ children }: { children: React.ReactNode }) {
   );
 }
 
-function IconButton({ label, onClick, active, children }: {
-  label: string; onClick: () => void; active?: boolean; children: React.ReactNode;
+function IconButton({ label, onClick, active, disabled, children }: {
+  label: string; onClick: () => void; active?: boolean; disabled?: boolean; children: React.ReactNode;
 }) {
   return (
-    <button type="button" onClick={onClick} title={label} aria-label={label} aria-pressed={active}
-      className={`flex h-10 w-10 items-center justify-center rounded-full bg-panel/85 ring-1 ring-line backdrop-blur hover:text-accent ${active ? "text-accent" : "text-fg"}`}>
+    <button type="button" onClick={onClick} title={label} aria-label={label} aria-pressed={active} disabled={disabled}
+      className={`press flex h-11 w-11 items-center justify-center rounded-full bg-panel/85 ring-1 ring-line backdrop-blur hover:text-accent disabled:opacity-40 ${active ? "text-accent" : "text-fg"}`}>
       <Svg>{children}</Svg>
     </button>
   );

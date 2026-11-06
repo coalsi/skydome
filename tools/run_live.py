@@ -53,7 +53,7 @@ sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from build_stitch_lut import build, is_stale, lut_path  # noqa: E402
-from skydome_pipeline.config import load_cameras  # noqa: E402
+from skydome_pipeline.config import load_cameras, load_modes  # noqa: E402
 from skydome_server.live import read_mode  # noqa: E402
 
 BINARY = ROOT / "pipeline" / "native" / "build" / "skydome-live"
@@ -63,6 +63,8 @@ FULL_SNAPSHOT = "/tmp/skydome-full.jpg"   # full-detail stills, same handshake
 FULL_SIZE = 6656     # ~33 px/° like the cameras themselves (5120² is ~26)
 ZOOM_FILE = "/tmp/skydome-zoom.txt"       # "x0 y0 x1 y1" from the web page while it's zoomed in
 ZOOM_SIZE = (1600, 1200)                  # the page asks for 4:3 rectangles
+PHONE_FILE = "/tmp/skydome-phone.txt"     # touched by the web page while a phone watches
+PHONE_WIDTH = 1920                        # /dome-phone: a phone's decoder won't take the 5120 of /dome
 HORIZON_FILE = ROOT / "var" / "horizon.txt"   # ground mask (tools/detect_horizon.py)
 RAW_DIR = Path("/tmp/skydome-raw")         # each camera's frame as sent, on request (the raw download)
 STRETCH_FILE = ROOT / "var" / "stretch.txt"  # night stretch "black k" from the web page (D-025)
@@ -123,7 +125,9 @@ def launch(mode_name: str, devices: dict[str, str], args, extra: list[str]) -> s
     for size in (mode["size"], FULL_SIZE):
         if is_stale(size):
             build(size)
+    dome = load_modes(ROOT / "config").dome
     cmd = [str(BINARY), "--lut", str(lut_path(mode["size"])), "--fps", str(mode["fps"]), "--capture", mode["capture"],
+           "--north-deg", str(dome.north_deg),
            "--bitrate", str(args.bitrate or mode["bitrate"]), "--stats-file", args.stats_file,
            "--snapshot", args.snapshot,
            "--sink", f"rtspclientsink location=rtsp://127.0.0.1:8554/{mode['path']} protocols=tcp latency=0",
@@ -132,6 +136,12 @@ def launch(mode_name: str, devices: dict[str, str], args, extra: list[str]) -> s
            "--horizon", str(HORIZON_FILE), "--raw-dir", str(RAW_DIR), "--stretch", str(STRETCH_FILE),
            "--stack", str(STACK_FILE), "--asi-settings", str(ASI_SETTINGS), "--asi-caps", str(ASI_CAPS),
            "--watch-dir", WATCH_DIR, "--watch-fps", str(WATCH_FPS)]
+    phone_height = PHONE_WIDTH
+    if dome.stream_aspect:
+        w, h = dome.stream_aspect
+        cmd += ["--stream-height", str(mode["size"] * h // w // 2 * 2)]
+        phone_height = PHONE_WIDTH * h // w // 2 * 2
+    cmd += ["--phone-file", PHONE_FILE, "--phone-size", f"{PHONE_WIDTH}x{phone_height}"]
     RAW_DIR.mkdir(exist_ok=True)
     Path(WATCH_DIR).mkdir(exist_ok=True)
     for name, dev in devices.items():

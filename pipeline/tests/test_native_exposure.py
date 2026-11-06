@@ -46,7 +46,23 @@ def test_twilight_raises_the_gain_and_keeps_the_video_smooth(check):
 def test_night_is_a_long_exposure_at_the_top_gain(check):
     exposure, gain, level = settle(check, 1e-9)    # needs ~18 s at 20 dB
     assert gain == 200 and 66667 < exposure <= 20_000_000
-    assert level == pytest.approx(0.18, rel=0.05)
+    assert level == pytest.approx(0.18, rel=0.26)
+
+
+def test_a_settled_long_exposure_stops_changing(check):
+    """Each change of a long exposure spoils a frame (asi_source.cpp)."""
+    runs = [subprocess.run([str(check), "1e-9", str(n)], capture_output=True, text=True, check=True).stdout
+            for n in (60, 61, 67)]
+    assert runs[0] == runs[1] == runs[2]
+
+
+def test_a_camera_a_few_frames_behind_does_not_swing(check):
+    """Video frames show a new setting late. Adjusting on each one ran the
+    exposure up to the top and back, and left the sky white at dawn."""
+    out = subprocess.run([str(check), "1e-4", "200", "3"], capture_output=True, text=True, check=True).stdout.split()
+    exposure, gain, level, peak = int(out[0]), int(out[1]), float(out[2]), float(out[3])
+    assert gain == 0 and level == pytest.approx(0.18, rel=0.05)
+    assert peak < 3 * exposure
 
 
 def test_a_darker_sky_stops_at_the_longest_exposure(check):

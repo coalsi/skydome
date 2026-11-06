@@ -248,6 +248,7 @@ void AsiSource::apply_controls() {
     ASISetControlValue(id_, ASI_EXPOSURE, want.exposure_us, ASI_FALSE);
     ASISetControlValue(id_, ASI_GAIN, want.gain, ASI_FALSE);
     if (restart) ASIStartVideoCapture(id_);
+    ae_.changed(want);
     // The frame already exposing was taken with the old values
     older_pending_ = !restart && active_.exposure_us > 0;
     older_ = active_;
@@ -277,6 +278,16 @@ double AsiSource::sky_level(const std::vector<uint16_t>& raw) const {
 void AsiSource::on_frame() {
     const AutoExposure::Setting taken = older_pending_ ? older_ : active_;
     older_pending_ = false;
+    // Changing a long exposure spoils the next frame: nearly black, and long
+    // before any exposure could have ended. It would darken the picture, and
+    // the automatic exposure would chase it, change again, and spoil another
+    const auto arrived = Clock::now();
+    const bool spoiled = taken.exposure_us >= 1'000'000 &&
+                         std::chrono::duration<double>(arrived - last_frame_).count() < taken.exposure_us / 2e6;
+    if (spoiled) {
+        last_frame_ = arrived;
+        return;
+    }
     const double level = sky_level(host_);
     // The frame's middle: it arrived as its exposure ended
     const double t_mid = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count() -
@@ -336,6 +347,15 @@ void AsiSource::run() {
         }
         if (id_ >= 0 && now >= next_housekeeping_) {
             next_housekeeping_ = now + std::chrono::seconds(5);
+            // No sky is white at the camera's shortest: it hasn't got the
+            // setting (seen at dawn on the ASI678MC). Sending everything again cures it
+            {
+                std::lock_guard<std::mutex> lock(m_);
+                if (settings_.auto_exposure && active_.exposure_us <= exp_min_ && active_.gain <= gain_min_ && level_ > 0.95) {
+                    std::fprintf(stderr, "[%s] white at the shortest exposure: sending the settings again\n", name_.c_str());
+                    controls_dirty_ = true;
+                }
+            }
             long t = 0;
             ASI_BOOL a = ASI_FALSE;
             if (ASIGetControlValue(id_, ASI_TEMPERATURE, &t, &a) == ASI_SUCCESS) {

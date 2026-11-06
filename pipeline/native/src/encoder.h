@@ -21,6 +21,7 @@ struct EncoderConfig {
     int height = 5120;
     int fps = 15;
     int bitrate_kbps = 20000;
+    int crop_height = 0;       // stream the middle of the frame, this tall; 0 = all of it
     // Everything after h264parse. Empty = no encoder at all (stitch only, for benchmarks)
     std::string sink = "rtspclientsink location=rtsp://127.0.0.1:8554/dome protocols=tcp latency=0";
     bool encode = true;

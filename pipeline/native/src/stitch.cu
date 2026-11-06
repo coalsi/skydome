@@ -46,6 +46,7 @@ struct Params {
     // nullptr = none. Below it the output is fill, like outside the dome
     const float* horizon;
     float edge_deg;     // zenith angle at the dome circle (table header)
+    float north_deg;    // where north sits, counterclockwise from the top
     int nodes, step, size;
     int out_div;        // 1 = luma, 2 = chroma (output is half size)
     int ow, oh;         // output plane size
@@ -75,10 +76,10 @@ __global__ void stitch_kernel(Params p) {
     const float rho2 = dx * dx + dy * dy;
     bool hide = rho2 > 1.f;
     if (!hide && p.horizon) {
-        // Same layout as AllSkyProjection (north up, east on the left)
+        // Same layout as AllSkyProjection (east to north's left)
         const float alt = 90.f - sqrtf(rho2) * p.edge_deg;
-        float az = atan2f(-dx, -dy) * 57.29578f;
-        if (az < 0.f) az += 360.f;
+        float az = atan2f(-dx, -dy) * 57.29578f - p.north_deg;
+        while (az < 0.f) az += 360.f;
         hide = alt < __ldg(p.horizon + min(static_cast<int>(az), 359));
     }
     if (hide) {
@@ -184,6 +185,8 @@ void GpuStitcher::set_horizon(const std::vector<float>& alt_by_az) {
     has_horizon_ = true;
 }
 
+void GpuStitcher::set_north(float deg) { north_deg_ = deg; }
+
 void GpuStitcher::set_stretch(float black, float k) {
     stretch_k_ = std::max(k, 0.f);
     black_ = stretch_k_ > 0.f ? std::min(std::max(black, 0.f), 200.f) : 0.f;   // off: as before
@@ -215,6 +218,7 @@ void GpuStitcher::run_view(const PlanarImage* inputs, const I420Out& out, const 
         p->mask = d_mask_;
         p->horizon = has_horizon_ ? d_horizon_ : nullptr;
         p->edge_deg = edge_deg_;
+        p->north_deg = north_deg_;
         p->nodes = nodes_;
         p->step = step_;
         p->size = size_;

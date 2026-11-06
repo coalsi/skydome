@@ -50,10 +50,10 @@ RUN_DEG = 2.0          # this much ground in a row ends the sky
 MARGIN_DEG = 0.5
 
 
-def horizon_from_image(img: np.ndarray, edge_deg: float) -> np.ndarray:
-    """img: H x W x 3 RGB dome (north up, east left). Returns 360 altitudes."""
+def horizon_from_image(img: np.ndarray, edge_deg: float, north_deg: float = 0.0) -> np.ndarray:
+    """img: H x W x 3 RGB dome (north north_deg from the top, east to its left). Returns 360 altitudes."""
     size = img.shape[0]
-    proj = AllSkyProjection(size=size, edge_zenith_deg=edge_deg)
+    proj = AllSkyProjection(size=size, edge_zenith_deg=edge_deg, north_deg=north_deg)
     rgb = img.astype(np.float32)
     luma = rgb @ np.array([0.299, 0.587, 0.114], np.float32)
     blue = (rgb[..., 2] - rgb[..., 0]) / (luma + 8)   # >0 blue sky, <0 green/brown
@@ -89,16 +89,16 @@ def horizon_from_image(img: np.ndarray, edge_deg: float) -> np.ndarray:
     return np.maximum.reduce([pad[:-2], pad[1:-1], pad[2:]]) + MARGIN_DEG
 
 
-def preview(img: np.ndarray, horizon: np.ndarray, edge_deg: float) -> Image.Image:
+def preview(img: np.ndarray, horizon: np.ndarray, edge_deg: float, north_deg: float = 0.0) -> Image.Image:
     """The image with the masked ground tinted red."""
     size = img.shape[0]
-    proj = AllSkyProjection(size=size, edge_zenith_deg=edge_deg)
+    proj = AllSkyProjection(size=size, edge_zenith_deg=edge_deg, north_deg=north_deg)
     idx = np.arange(size, dtype=np.float64)
     u, v = np.meshgrid(idx, idx)
     half = size / 2
     dx, dy = (u + 0.5 - half) / half, (v + 0.5 - half) / half
     alt = 90.0 - np.hypot(dx, dy) * edge_deg
-    az = np.degrees(np.arctan2(-dx, -dy)) % 360
+    az = (np.degrees(np.arctan2(-dx, -dy)) - north_deg) % 360
     hidden = (alt < horizon[np.minimum(az.astype(int), 359)]) & (np.hypot(dx, dy) <= 1)
     out = img.astype(np.float32)
     out[hidden] = out[hidden] * 0.35 + np.array([160, 0, 0], np.float32)

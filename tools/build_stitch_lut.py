@@ -47,12 +47,13 @@ def is_stale(size: int) -> bool:
 def build(size: int, step: int = 8) -> Path:
     cams = calibrated_cameras(ROOT / "config")
     t0 = time.monotonic()
-    edge = load_modes(ROOT / "config").dome.edge_zenith_deg
-    glut = build_grid_lut(AllSkyProjection(size=size, edge_zenith_deg=edge), cams, step=step)
+    dome = load_modes(ROOT / "config").dome
+    glut = build_grid_lut(AllSkyProjection(size=size, edge_zenith_deg=dome.edge_zenith_deg, north_deg=dome.north_deg),
+                          cams, step=step)
     out = lut_path(size)
     out.parent.mkdir(exist_ok=True)
     glut.save(out)
-    print(f"Wrote {out.relative_to(ROOT)} (edge {edge:g}° from zenith, {out.stat().st_size / 1e6:.1f} MB, "
+    print(f"Wrote {out.relative_to(ROOT)} (edge {dome.edge_zenith_deg:g}° from zenith, {out.stat().st_size / 1e6:.1f} MB, "
           f"{glut.nodes}x{glut.nodes} nodes, {time.monotonic() - t0:.1f} s)")
     return out
 

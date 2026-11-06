@@ -94,6 +94,8 @@ class Dome(BaseModel):
     model_config = {"extra": "allow"}
     size: int = 4096
     edge_zenith_deg: float = Field(default=90.0, ge=60, le=180)
+    north_deg: float = 0.0              # where north sits, counterclockwise from the top
+    stream_aspect: tuple[int, int] | None = None   # width, height; None = the square dome
 
 
 class ModesConfig(BaseModel):

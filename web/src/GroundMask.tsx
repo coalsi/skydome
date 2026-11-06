@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type Status } from "./api";
+import { Switch } from "./controls";
 
 // Hide the ground (houses, trees) below a horizon line: on/off, and an editor
 // that paints the line on the dome (D-024)
@@ -29,9 +30,9 @@ export function GroundMask({ status, editing, onEdit }: {
         </p>
         <div className="flex gap-2">
           <button type="button" onClick={save} disabled={busy}
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-bg disabled:opacity-50">Save</button>
+            className="press min-h-11 flex-1 rounded-lg bg-accent px-3 text-sm font-medium text-bg disabled:opacity-50">Save</button>
           <button type="button" onClick={() => onEdit(null)}
-            className="rounded-lg px-3 py-1.5 text-sm text-muted ring-1 ring-line hover:text-fg">Cancel</button>
+            className="press min-h-11 flex-1 rounded-lg px-3 text-sm text-muted ring-1 ring-line hover:text-fg">Cancel</button>
         </div>
         {error && <p className="mt-2 text-xs text-bad">{error}</p>}
       </div>
@@ -46,14 +47,11 @@ export function GroundMask({ status, editing, onEdit }: {
           <div className="text-sm">Hide the ground</div>
           <div className="text-xs text-muted">Houses, trees and fences below the horizon line</div>
         </div>
-        <button type="button" role="switch" aria-checked={on} aria-label="Hide the ground"
-          disabled={busy || !gm?.available} onClick={() => run(api.setGroundMask({ on: !on }))}
-          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-40 ${on ? "bg-accent" : "bg-line"}`}>
-          <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-fg shadow transition-transform ${on ? "translate-x-5" : ""}`} />
-        </button>
+        <Switch on={on} label="Hide the ground" disabled={busy || !gm?.available}
+          onChange={(v) => run(api.setGroundMask({ on: v }))} />
       </div>
       <button type="button" onClick={startEdit} disabled={busy}
-        className="mt-2 text-xs text-accent hover:underline disabled:opacity-50">
+        className="press mt-1 min-h-11 text-sm text-accent hover:underline disabled:opacity-50">
         {gm?.available ? "Edit the line" : "Draw a horizon line"}
       </button>
       {error && <p className="mt-2 text-xs text-bad">{error}</p>}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Calibration, type Stretch } from "./api";
+import { Range } from "./controls";
 
 // Night / Day in one click, and the night stretch that lifts faint stars (D-025)
 export function SkyPanel() {
@@ -38,7 +39,7 @@ export function SkyPanel() {
     timer.current = window.setTimeout(() => api.setStretch(next).catch(() => {}), 150);
   };
 
-  const btn = "flex-1 rounded-lg px-3 py-1.5 text-sm ring-1 ring-line disabled:opacity-50";
+  const btn = "press min-h-11 flex-1 rounded-lg px-3 text-sm ring-1 ring-line disabled:opacity-50";
   return (
     <div>
       <div className="mb-2 text-sm">Sky</div>
@@ -50,7 +51,9 @@ export function SkyPanel() {
           {busy === "day" ? "Setting…" : "Day"}
         </button>
       </div>
-      {note && <p className="mt-2 text-xs leading-relaxed text-muted">{note}</p>}
+      <p className="mt-2 text-xs leading-relaxed text-muted">
+        {note ?? "Switches by itself at dusk and dawn. These buttons are to do it sooner."}
+      </p>
       {stretch && (
         <div className="mt-3 space-y-2">
           {stack !== null && (
@@ -124,11 +127,11 @@ function StarCalibration() {
       <button type="button" disabled={running || !cal.dark_enough} onClick={run}
         title={cal.dark_enough ? "Match the cameras to the stars now (a few minutes)"
           : `Needs a dark sky: the Sun is at ${Math.round(cal.sun_alt)}°`}
-        className="mt-2 w-full rounded-lg px-3 py-1.5 text-sm ring-1 ring-line hover:text-accent disabled:opacity-50">
+        className="press mt-2 min-h-11 w-full rounded-lg px-3 text-sm ring-1 ring-line hover:text-accent disabled:opacity-50">
         {running ? "Calibrating…" : cal.dark_enough ? "Calibrate from the stars" : "Calibrate (after dark)"}
       </button>
-      <label className="mt-2 flex items-center gap-2 text-xs text-muted">
-        <input type="checkbox" checked={cal.auto}
+      <label className="mt-1 flex min-h-11 items-center gap-3 text-xs text-muted">
+        <input type="checkbox" className="h-5 w-5 shrink-0" checked={cal.auto}
           onChange={(e) => api.setCalibrationAuto(e.target.checked).then(setCal).catch(() => {})} />
         Every night by itself, and after each start-up once it's dark
       </label>
@@ -148,8 +151,7 @@ function Slider({ label, value, min, max, step, fmt, onChange, disabled }: {
         <label htmlFor={id} className="text-sm">{label}</label>
         <span className="tabular text-xs text-muted">{fmt(value)}</span>
       </div>
-      <input id={id} type="range" min={min} max={max} step={step} value={value} disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))} />
+      <Range id={id} min={min} max={max} step={step} value={value} disabled={disabled} onChange={onChange} />
     </div>
   );
 }

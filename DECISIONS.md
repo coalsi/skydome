@@ -1025,5 +1025,36 @@ anyway, so a wedge under the enclosure tilts the camera at the clear north-west
   lens and the pointing as before.
 * **Focusing:** `/focus/` shows the camera's own frame at every pixel with
   sharpness and star size (`server/skydome_server/focus.py`), since a lens
-  can't be focused by eye from the stitched dome. Not yet run on the real camera.
+  can't be focused by eye from the stitched dome.
+* **Display:** the sensor's long side runs north-south for now, so `north_deg: 90`
+  puts north on the left and `stream_aspect` crops the dome's square to 16:9.
+  `edge_zenith_deg: 86` makes the picture just fill the width. The stream is
+  5120 × 2880, enlarged from the sensor's 3840 × 2160; stills stay square. After
+  the planned quarter turn `north_deg` goes back to 0 and the stars are refit.
+* **Long exposures:** the frame after a change of a long exposure is spoiled
+  (nearly black, and early), so it's dropped, and a settled exposure stays put
+  within a 1.25 deadband: chasing those frames made the picture swing dark.
 
+
+### D-032 · Day and night run by themselves, and the page is built for a phone (owner, 2026-11-06)
+
+* **Automatic exposure waits for the camera.** At video rates a new setting
+  reaches the picture two frames later (measured). Adjusting on every frame ran
+  the exposure from one end of its range to the other, and at dawn left the
+  sky white with the shortest exposure set. It now waits three frames after a
+  change (`AutoExposure::changed`); long exposures keep the one-frame rule.
+* **A watchdog behind it.** White at the shortest exposure can't be a real sky,
+  so `AsiSource` sends every setting again, which is what cured it by hand.
+* **Night and Day set everything that decides the picture**, the longest
+  exposure and the colour included: a slider left low at dawn no longer darkens
+  the night. Page changes to these last until the next dusk or dawn. The night
+  sky's colour (102/76) turned a blue day grey, so Day has its own (85/118).
+* **The page is one screen on a phone:** the picture stays put, the panel scrolls
+  under it, the tabs are at the bottom. Full screen is the page's own, since an
+  iPhone can only full-screen its own video player, which can't pinch into the
+  dome; a phone on its side goes there by itself. From the Home Screen an
+  iPhone drops the browser's bars too.
+* **Phones get their own stream.** An iPhone connected and took the 5120 × 2880
+  H.264 stream but drew nothing. Touch screens play `/dome-phone` instead: the
+  same picture at 1920 wide, rendered like the zoom stream and only while a page
+  asks for it. `/dome` stays as it is for the NVR.

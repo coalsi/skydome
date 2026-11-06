@@ -34,3 +34,6 @@ paths:
   # full sharpness; only while someone is zoomed in (D-023)
   dome-zoom:
     source: publisher
+  # The whole picture small enough for a phone to decode; only while one watches (D-032)
+  dome-phone:
+    source: publisher

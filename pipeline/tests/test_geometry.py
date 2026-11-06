@@ -99,3 +99,17 @@ def test_canvas_round_trip(canvas):
     m = inside
     np.testing.assert_allclose(u2[m], u[m], atol=1e-6)
     np.testing.assert_allclose(v2[m], v[m], atol=1e-6)
+
+
+def test_north_can_sit_on_the_left():
+    from skydome_pipeline.geometry import altaz_to_vec
+    from skydome_pipeline.projection import AllSkyProjection
+    p = AllSkyProjection(size=1000, edge_zenith_deg=100, north_deg=90)
+    u, v = p.world_to_pixel(altaz_to_vec(np.array([0.0, 90.0, 180.0, 270.0]), np.array([0.0, 0.0, 0.0, 0.0])))
+    assert u[0] < 100 and abs(v[0] - 500) < 1          # north: left
+    assert v[1] > 900 and abs(u[1] - 500) < 1          # east: bottom
+    assert u[2] > 900 and abs(v[2] - 500) < 1          # south: right
+    assert v[3] < 100 and abs(u[3] - 500) < 1          # west: top
+    dirs, inside = p.pixel_to_world(u, v)
+    assert inside.all()
+    assert np.allclose(dirs, altaz_to_vec(np.array([0.0, 90.0, 180.0, 270.0]), np.array([0.0, 0.0, 0.0, 0.0])), atol=1e-6)

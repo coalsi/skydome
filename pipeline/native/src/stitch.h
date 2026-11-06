@@ -70,6 +70,8 @@ public:
     // Night stretch of the blended Y (D-025): everything at or below `black`
     // goes to 0 and the faint end is lifted along asinh(k x); k = 0 turns it off
     void set_stretch(float black, float k);
+    // Where north sits in the picture, for the ground mask (config/modes.yaml)
+    void set_north(float deg);
 
     // Used from the next run() on; one per table camera. Default: none
     void set_corrections(const std::vector<CamCorrection>& corr);
@@ -80,6 +82,7 @@ private:
     float feather_[8];
     CamCorrection corr_[8];
     float edge_deg_;
+    float north_deg_ = 0.f;
     float* d_horizon_ = nullptr;
     bool has_horizon_ = false;
     float black_ = 0.f, stretch_k_ = 0.f;

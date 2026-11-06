@@ -33,7 +33,10 @@ export interface LiveStats {
 export interface Status {
   mode: Mode;
   zoom_path: string;
+  phone_path: string | null;
   edge_zenith_deg: number;
+  north_deg: number;
+  stream_aspect: number;
   ground_mask: { available: boolean; on: boolean };
   smooth_until: string | null;
   live: LiveStats | null;
@@ -171,6 +174,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(changes),
     }).then((r) => json<{ controls: Control[] }>(r)),
+  phone: () => fetch("/api/phone", { method: "PUT" }),
   zoom: (r: { x0: number; y0: number; x1: number; y1: number }) =>
     fetch("/api/zoom", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(r) }),
   groundMask: () => fetch("/api/ground-mask").then((r) => json<{ on: boolean; alt: number[] | null }>(r)),

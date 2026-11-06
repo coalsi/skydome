@@ -58,7 +58,7 @@ export function HealthPanel({ status }: { status: Status | null }) {
               </tbody>
             </table>
             {zwo && (
-              <div className="mt-3 grid grid-cols-4 gap-2">
+              <div className="mt-3 grid grid-cols-2 gap-2">
                 <Stat label={zwo.auto_exposure ? "Exposure (auto)" : "Exposure"} value={exposure(zwo.exposure_us!)} />
                 <Stat label="Gain" value={`${((zwo.gain ?? 0) / 10).toFixed(1)} dB`} />
                 <Stat label="Sky level" value={`${((zwo.sky_level ?? 0) * 100).toFixed(0)}%`}

@@ -1,0 +1,9 @@
+{
+  "name": "SkyDome",
+  "short_name": "SkyDome",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "theme_color": "#12161e",
+  "icons": [{ "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" }]
+}

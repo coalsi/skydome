@@ -8,8 +8,16 @@ dome:
   size: 5120          # all-sky canvas (Detail, D-023)
   # Zenith angle at the edge of the dome circle. 90 = horizon at the edge
   # (handoff §5.4); 100 = 10° below it, so the side cameras' lower corners
-  # aren't cut off and the horizon is a circle at 90% radius (DECISIONS.md D-018)
-  edge_zenith_deg: 100
+  # aren't cut off and the horizon is a circle at 90% radius (DECISIONS.md D-018).
+  # 86: the ASI678MC's picture just fills the stream's width (D-031)
+  edge_zenith_deg: 86
+  # Where north sits in the picture, degrees counterclockwise from the top:
+  # 0 = top, 90 = left. The sensor's long side should run across the picture
+  # (D-031): it runs north-south now, and when the rig is turned a quarter
+  # turn this goes back to 0
+  north_deg: 90
+  # The stream's shape: the middle of the square dome. Stills stay square
+  stream_aspect: [16, 9]
   equirect: [8192, 2048]
 
 modes:

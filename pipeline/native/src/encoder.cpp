@@ -44,14 +44,19 @@ void Encoder::start(Clock::time_point now) {
         state_ = State::Running;
         return;
     }
+    char crop[64] = "";
+    if (cfg_.crop_height > 0 && cfg_.crop_height < cfg_.height) {
+        const int off = (cfg_.height - cfg_.crop_height) / 2 / 2 * 2;   // even: the chroma is half size
+        std::snprintf(crop, sizeof crop, "! videocrop top=%d bottom=%d ", off, cfg_.height - cfg_.crop_height - off);
+    }
     char desc[1024];
     // Full-range BT.601 like the JPEG decoder's output, so x264 flags it in the VUI
     std::snprintf(desc, sizeof desc,
                   "appsrc name=src is-live=true format=time do-timestamp=true block=false max-buffers=2 leaky-type=downstream "
                   "caps=video/x-raw,format=I420,width=%d,height=%d,framerate=%d/1,colorimetry=1:4:5:1 "
-                  "! x264enc speed-preset=ultrafast tune=zerolatency bitrate=%d threads=0 key-int-max=%d "
+                  "%s! x264enc speed-preset=ultrafast tune=zerolatency bitrate=%d threads=0 key-int-max=%d "
                   "! h264parse config-interval=-1 ! %s",
-                  cfg_.width, cfg_.height, cfg_.fps, cfg_.bitrate_kbps, cfg_.fps * 2, cfg_.sink.c_str());
+                  cfg_.width, cfg_.height, cfg_.fps, crop, cfg_.bitrate_kbps, cfg_.fps * 2, cfg_.sink.c_str());
     GError* err = nullptr;
     pipeline_ = gst_parse_launch(desc, &err);
     if (!pipeline_) {

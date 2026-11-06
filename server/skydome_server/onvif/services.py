@@ -72,6 +72,11 @@ class Stream:
     bitrate_kbps: int
     path: str
     rtsp_port: int = 8554
+    height: int = 0        # 0 = square
+
+    @property
+    def tall(self) -> int:
+        return self.height or self.size
 
     @property
     def gov(self) -> int:
@@ -301,7 +306,7 @@ class Services:
     def _encoder_cfg(self, tag: str) -> str:
         s = self.stream
         return (f'<{tag} token="{ENCODER}"><tt:Name>H.264</tt:Name><tt:UseCount>1</tt:UseCount>'
-                f"<tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>{s.size}</tt:Width><tt:Height>{s.size}</tt:Height></tt:Resolution>"
+                f"<tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>{s.size}</tt:Width><tt:Height>{s.tall}</tt:Height></tt:Resolution>"
                 "<tt:Quality>5</tt:Quality>"
                 f"<tt:RateControl><tt:FrameRateLimit>{s.fps}</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval>"
                 f"<tt:BitrateLimit>{s.bitrate_kbps}</tt:BitrateLimit></tt:RateControl>"
@@ -321,7 +326,7 @@ class Services:
     def video_sources(self, r: Request) -> str:
         s = self.stream
         return (f'<trt:GetVideoSourcesResponse><trt:VideoSources token="{SOURCE}"><tt:Framerate>{s.fps}</tt:Framerate>'
-                f"<tt:Resolution><tt:Width>{s.size}</tt:Width><tt:Height>{s.size}</tt:Height></tt:Resolution>"
+                f"<tt:Resolution><tt:Width>{s.size}</tt:Width><tt:Height>{s.tall}</tt:Height></tt:Resolution>"
                 "</trt:VideoSources></trt:GetVideoSourcesResponse>")
 
     def video_source_configuration(self, r: Request) -> str:
@@ -354,7 +359,7 @@ class Services:
         s = self.stream
         return ("<trt:GetVideoEncoderConfigurationOptionsResponse><trt:Options>"
                 "<tt:QualityRange><tt:Min>5</tt:Min><tt:Max>5</tt:Max></tt:QualityRange><tt:H264>"
-                f"<tt:ResolutionsAvailable><tt:Width>{s.size}</tt:Width><tt:Height>{s.size}</tt:Height></tt:ResolutionsAvailable>"
+                f"<tt:ResolutionsAvailable><tt:Width>{s.size}</tt:Width><tt:Height>{s.tall}</tt:Height></tt:ResolutionsAvailable>"
                 f"<tt:GovLengthRange><tt:Min>{s.gov}</tt:Min><tt:Max>{s.gov}</tt:Max></tt:GovLengthRange>"
                 f"<tt:FrameRateRange><tt:Min>{s.fps}</tt:Min><tt:Max>{s.fps}</tt:Max></tt:FrameRateRange>"
                 "<tt:EncodingIntervalRange><tt:Min>1</tt:Min><tt:Max>1</tt:Max></tt:EncodingIntervalRange>"
@@ -369,11 +374,11 @@ class Services:
         s = self.stream
         if cfg is None or cfg.get("token") != ENCODER:
             raise invalid("ter:NoConfig", "no such video encoder configuration")
-        want = {"tt:Encoding": "H264", "tt:Resolution/tt:Width": str(s.size), "tt:Resolution/tt:Height": str(s.size)}
+        want = {"tt:Encoding": "H264", "tt:Resolution/tt:Width": str(s.size), "tt:Resolution/tt:Height": str(s.tall)}
         for path, value in want.items():
             got = child_text(cfg, path)
             if got is not None and got != value:
-                raise invalid("ter:ConfigModify", f"the dome stream is fixed at {s.size}x{s.size} H.264 (D-015)")
+                raise invalid("ter:ConfigModify", f"the dome stream is fixed at {s.size}x{s.tall} H.264 (D-015)")
         fps = child_text(cfg, "tt:RateControl/tt:FrameRateLimit")
         if fps is not None and float(fps) != s.fps:
             raise invalid("ter:ConfigModify", f"the dome stream is fixed at {s.fps} fps (D-015)")

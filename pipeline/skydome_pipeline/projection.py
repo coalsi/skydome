@@ -18,7 +18,8 @@ class AllSkyProjection:
     """Azimuthal-equidistant all-sky image (handoff §5.4).
 
     Zenith at the centre, the circle of radius size/2 at zenith angle
-    ``edge_zenith_deg`` (90 = horizon). North is up. ``east_left`` gives the
+    ``edge_zenith_deg`` (90 = horizon). North is ``north_deg`` counterclockwise
+    from the top (0 = up, 90 = left). ``east_left`` gives the
     conventional view of the sky from below (east on the left); False gives
     a map view (east on the right).
     """
@@ -26,6 +27,7 @@ class AllSkyProjection:
     size: int = 4096
     edge_zenith_deg: float = 90.0
     east_left: bool = True
+    north_deg: float = 0.0
 
     @property
     def width(self) -> int:
@@ -49,13 +51,13 @@ class AllSkyProjection:
         dy = (np.asarray(v, dtype=np.float64) + 0.5 - half) / half
         rho = np.hypot(dx, dy)
         zenith = rho * self.edge_zenith_deg
-        az = np.degrees(np.arctan2(self._east_sign() * dx, -dy))
+        az = np.degrees(np.arctan2(self._east_sign() * dx, -dy)) - self.north_deg
         return altaz_to_vec(az, 90.0 - zenith), rho <= 1.0
 
     def world_to_pixel(self, dirs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         az, alt = vec_to_altaz(dirs)
         rho = (90.0 - alt) / self.edge_zenith_deg
-        a = np.radians(az)
+        a = np.radians(az + self.north_deg)
         half = self.size / 2
         u = self._east_sign() * np.sin(a) * rho * half + half - 0.5
         v = -np.cos(a) * rho * half + half - 0.5

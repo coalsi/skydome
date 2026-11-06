@@ -295,3 +295,13 @@ def test_night_and_day_presets(tmp_path):
     assert client.put("/api/stack", json={"frames": 9999}).status_code == 400
     assert client.post("/api/preset/night").json()["stack"] == 16
     assert set(PRESETS) == {"night", "day"}
+
+
+def test_a_phone_keeps_its_stream_running(tmp_path):
+    settings = CameraSettings(tmp_path / "s.yaml", finder=lambda: [], opener=FakeDevice, log=lambda *a, **k: None)
+    file = tmp_path / "phone.txt"
+    lv = Live(tmp_path / "mode.yaml", [], paths=lambda: {}, phone_file=file)
+    client = TestClient(create_app(settings, lv, System(tmp_path), SnapshotSource(tmp_path / "s.jpg")))
+    assert client.put("/api/phone").json() == {"path": "dome-phone"}
+    assert file.exists()
+    assert client.get("/api/status").json()["phone_path"] == "dome-phone"
