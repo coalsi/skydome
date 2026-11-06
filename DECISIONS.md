@@ -1012,3 +1012,18 @@ corrections ("that's a plane, not a bird"), and flag anything unknown.
   pictures, the page on a phone) and the service end to end on simulated
   frames. **Not yet** on the real camera: the thresholds, the star masks
   and how well the rules guess all need tuning on real nights.
+
+### D-031 · The camera that came is an ASI678MC, tilted at the clearest sky (owner, 2026-11-05)
+The camera reports itself as a **ZWO ASI678MC** (3840 × 2160, 2.0 µm pixels),
+not the ASI676MC of D-029. The sensor's 16:9: the stock lens's image circle is
+about 3340 px across, so its 2160 px height cuts a quarter of the circle off.
+Going by a 2.5 mm lens that's ~76° from the zenith along the width and ~50°
+along the height. The owner keeps it: the south-east is light pollution
+anyway, so a wedge under the enclosure tilts the camera at the clear north-west
+(`skycam_zwo.scad` in the enclosure repo).
+* **Software:** `config/cameras.yaml` has the real sensor; the stars fit the
+  lens and the pointing as before.
+* **Focusing:** `/focus/` shows the camera's own frame at every pixel with
+  sharpness and star size (`server/skydome_server/focus.py`), since a lens
+  can't be focused by eye from the stitched dome. Not yet run on the real camera.
+

@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import live
+from . import focus, live
 from .asi_settings import AsiSettings
 from .camera_settings import CameraSettings
 from .objects import ObjectLog
@@ -412,23 +412,20 @@ def create_app(settings: CameraSettings | AsiSettings, live_cfg: Live, system: S
 
     app.get("/api/snapshot.jpg")(jpeg)
 
-    @app.get("/api/raw.zip")
-    def raw_zip() -> Response:
-        """Every pixel there is: each camera's latest frame, zipped, with the
-        camera layout and alignment for reference. A UVC camera's exactly as
-        it sent it (JPEG); the ZWO camera's luminance at 16 bits (PGM, linear
-        at night), before stitching or encoding (D-029)."""
+    def raw_frames() -> tuple[dict[str, Path], list[str], float]:
+        """Each live camera's next frame: {name: file}, the names asked for, and the longest exposure (µs)."""
         d = live_cfg.raw_dir
         stats = live.read_stats(live_cfg.stats_files)
         names = [n for n, c in ((stats or {}).get("cameras") or {}).items() if c.get("state") == "live"]
         if not d or not names:
             raise HTTPException(503, "no live cameras (is skydome-live running?)")
         asked = time.time()
+        d.mkdir(exist_ok=True)   # /tmp may have been cleaned since skydome-live made it
         (d / "request").touch()
         got: dict[str, Path] = {}
-        # A ZWO night frame can take its whole exposure to arrive
-        exposure = max(((stats or {}).get("cameras") or {}).get(n, {}).get("exposure_us") or 0 for n in names) / 1e6
-        while time.time() - asked < 5 + 1.2 * exposure and len(got) < len(names):
+        # A ZWO night frame can take two exposures to arrive: the one under way, then its own
+        exposure = max(((stats or {}).get("cameras") or {}).get(n, {}).get("exposure_us") or 0 for n in names)
+        while time.time() - asked < 5 + 2.2 * exposure / 1e6 and len(got) < len(names):
             time.sleep(0.05)
             for n in names:
                 for ext in (".jpg", ".pgm"):
@@ -437,6 +434,25 @@ def create_app(settings: CameraSettings | AsiSettings, live_cfg: Live, system: S
                         got[n] = p
         if not got:
             raise HTTPException(503, "the cameras didn't send a frame in time")
+        return got, names, exposure
+
+    @app.get("/api/focus")
+    def focus_frame(x: float = 0.5, y: float = 0.5, size: int = 512) -> dict:
+        """The camera's next frame for the focus page: the whole picture, the
+        spot around x, y (0..1) at every pixel, and how sharp it all is."""
+        got, _, exposure = raw_frames()
+        pgm = next((p for p in got.values() if p.suffix == ".pgm"), None)
+        if pgm is None:
+            raise HTTPException(409, "focusing needs the ZWO camera")
+        return focus.measure(focus.read_pgm(pgm), x, y, size, exposure)
+
+    @app.get("/api/raw.zip")
+    def raw_zip() -> Response:
+        """Every pixel there is: each camera's latest frame, zipped, with the
+        camera layout and alignment for reference. A UVC camera's exactly as
+        it sent it (JPEG); the ZWO camera's luminance at 16 bits (PGM, linear
+        at night), before stitching or encoding (D-029)."""
+        got, names, _ = raw_frames()
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:   # JPEGs don't compress further

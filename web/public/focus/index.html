@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SkyDome focus</title>
+<style>
+  :root { --bg: #0b0d10; --panel: #15191e; --line: #2a3038; --text: #e8ecf0; --dim: #93a0ad; --good: #5fd38d; --warn: #f0b95c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 -apple-system, system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 12px 16px 32px; display: grid; gap: 12px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  a { color: var(--dim); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .label { color: var(--dim); font-size: 14px; }
+  #now { font-size: 64px; line-height: 1.05; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #best { font-size: 16px; color: var(--dim); }
+  #now.good { color: var(--good); }
+  canvas { display: block; width: 100%; height: 64px; margin-top: 8px; }
+  #star { display: block; width: 100%; max-width: 320px; aspect-ratio: 1; margin: 0 auto; background: #000; border-radius: 8px; image-rendering: pixelated; }
+  #starpanel[hidden] { display: none; }
+  #crop { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; background: #000; border-radius: 8px; image-rendering: pixelated; }
+  #frame { position: relative; line-height: 0; cursor: crosshair; touch-action: manipulation; }
+  #whole { width: 100%; min-height: 120px; background: #000; border-radius: 8px; }
+  #box { position: absolute; border: 2px solid var(--warn); pointer-events: none; }
+  .buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  button { font: inherit; min-height: 48px; padding: 8px; color: var(--text); background: #222932; border: 1px solid var(--line); border-radius: 10px; }
+  button.on { border-color: var(--good); color: var(--good); }
+  #status { color: var(--dim); font-size: 14px; }
+  #status.bad { color: var(--warn); }
+  ol { margin: 0; padding-left: 20px; color: var(--dim); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Focus</h1><a href="/">Back to the dome</a></header>
+
+  <section class="panel">
+    <div class="label" id="what">Waiting for a picture</div>
+    <div id="now">–</div>
+    <div id="best"></div>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <div class="buttons">
+    <button id="stars">Night: 3 s</button>
+    <button id="auto">Automatic</button>
+    <button id="reset">Clear best</button>
+  </div>
+
+  <div class="panel" id="starpanel" hidden>
+    <div class="label" style="margin-bottom:8px">The star being measured, close up. It should shrink to a small tight dot</div>
+    <img id="star" alt="The measured star close up">
+  </div>
+
+  <div class="panel">
+    <div class="label" style="margin-bottom:8px">Every pixel of the yellow box</div>
+    <img id="crop" alt="The picked spot at full detail">
+  </div>
+
+  <div class="panel">
+    <div class="label" style="margin-bottom:8px">The whole picture. Tap a star, or anything far away, to focus on it</div>
+    <div id="frame"><img id="whole" alt="The camera's whole picture"><div id="box"></div></div>
+  </div>
+
+  <div id="status"></div>
+
+  <ol class="panel">
+    <li>At night, press Night: 3 s and tap a bright star in the picture. It's measured on its own. By day, tap something far away, like a rooftop edge.</li>
+    <li>Turn the lens a little, then stop and wait for the next number: each one comes from a new picture.</li>
+    <li>Go past the best number until it clearly gets worse, then come back to it.</li>
+    <li>Press Automatic when you're done, so the camera is back on its own exposure.</li>
+  </ol>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let spot = { x: 0.5, y: 0.5 };
+let history = [];       // { value, stars } for the current spot and measure
+let measure = null;     // "stars" or "sharpness"
+let best = null;
+let last = null;
+
+const text = (v) => v.toPrecision(3);   // the sharpness of a plain scene is small, and it's the changes that count
+
+function resetBest() { history = []; best = null; draw(); }
+
+function draw() {
+  const c = $("chart"), r = c.getBoundingClientRect(), g = c.getContext("2d");
+  c.width = r.width * devicePixelRatio; c.height = r.height * devicePixelRatio;
+  if (history.length < 2) return;
+  const lo = Math.min(...history), hi = Math.max(...history), span = hi - lo || 1;
+  g.strokeStyle = "#5fd38d"; g.lineWidth = 2 * devicePixelRatio; g.beginPath();
+  history.forEach((v, i) => {
+    const x = i / Math.max(history.length - 1, 1) * c.width;
+    const y = (1 - (v - lo) / span) * (c.height - 8) + 4;
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  });
+  g.stroke();
+}
+
+function show(d) {
+  last = d;
+  const one = d.star, stars = !!one || d.star_size !== null;
+  const kind = one ? "star" : d.star_size !== null ? "stars" : "sharpness";
+  if (kind !== measure) { measure = kind; resetBest(); }
+  const value = one ? one.size : stars ? d.star_size : d.sharpness;
+  const better = best === null || (stars ? value < best : value > best);
+  if (better) best = value;
+  history.push(value);
+  if (history.length > 120) history.shift();
+  $("what").textContent = one ? `Size of the one star in the yellow box. Lower is better${one.saturated ? ". It's too bright for a true size: pick a fainter star" : ""}`
+    : stars ? `Star size, ${d.stars} stars across the picture. Lower is better` : "Sharpness of the yellow box. Higher is better";
+  $("starpanel").hidden = !one;
+  if (one) $("star").src = one.crop;
+  $("now").textContent = text(value);
+  $("now").className = better ? "good" : "";
+  $("best").textContent = `Best so far ${text(best)}`;
+  $("crop").src = d.crop;
+  $("whole").src = d.whole;
+  const b = $("box").style;
+  b.left = d.spot.x / d.width * 100 + "%";
+  b.top = d.spot.y / d.height * 100 + "%";
+  b.width = d.spot.size / d.width * 100 + "%";
+  b.height = d.spot.size / d.height * 100 + "%";
+  const s = (d.exposure_us || 0) / 1e6;
+  $("status").textContent = `${d.width} × ${d.height}, exposure ${s >= 0.1 ? s.toFixed(1) + " s" : Math.round(s * 1000) + " ms"}, picture at ${new Date().toLocaleTimeString()}`;
+  $("status").className = "";
+  draw();
+}
+
+async function loop() {
+  for (;;) {
+    try {
+      const r = await fetch(`/api/focus?x=${spot.x}&y=${spot.y}`, { cache: "no-store" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `error ${r.status}`);
+      show(await r.json());
+    } catch (e) {
+      $("status").textContent = `No picture: ${e.message}. Trying again.`;
+      $("status").className = "bad";
+      await new Promise((go) => setTimeout(go, 2000));
+    }
+  }
+}
+
+async function setCamera(changes) {
+  try {
+    const r = await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) });
+    if (!r.ok) throw new Error(`error ${r.status}`);
+    markExposure((await r.json()).controls);
+    resetBest();
+  } catch (e) {
+    $("status").textContent = `Couldn't change the exposure: ${e.message}`;
+    $("status").className = "bad";
+  }
+}
+
+function markExposure(controls) {
+  const auto = controls.find((c) => c.name === "auto_exposure");
+  $("auto").classList.toggle("on", !!(auto && auto.value));
+  $("stars").classList.toggle("on", !!(auto && !auto.value));
+}
+
+$("stars").onclick = () => setCamera({ auto_exposure: 0, exposure_us: 3000000, gain: 250 });
+$("auto").onclick = () => setCamera({ auto_exposure: 1 });
+$("reset").onclick = resetBest;
+$("frame").onclick = (e) => {
+  const r = $("whole").getBoundingClientRect();
+  spot = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  resetBest();
+};
+addEventListener("resize", draw);
+fetch("/api/settings").then((r) => r.json()).then((d) => markExposure(d.controls)).catch(() => {});
+loop();
+</script>
+</body>
+</html>

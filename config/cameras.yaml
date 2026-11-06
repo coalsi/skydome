@@ -1,4 +1,4 @@
-# The all-sky camera (DECISIONS.md D-029): one ZWO ASI676MC looking straight
+# The all-sky camera (DECISIONS.md D-029, D-031): one ZWO ASI678MC looking
 # up through a fisheye lens. (The 5-camera rig of D-001..D-028 is in git
 # history; the tools still take any number of cameras.)
 #
@@ -16,11 +16,11 @@
 # lens is the nominal model until the stars have fitted one.
 
 sensor:
-  width: 3552             # ASI676MC, 2.0 µm pixels, 7.1 mm square
-  height: 3552
+  width: 3840             # ASI678MC, 2.0 µm pixels, 7.7 x 4.3 mm
+  height: 2160
 
 lens:
-  hfov_deg: 160           # the stock lens, a guess until the stars fit it (first clear night)
+  hfov_deg: 176           # across the sensor's width: the stock lens at 2.5 mm, a guess until the stars fit it
   projection: equidistant
 
 cameras:
